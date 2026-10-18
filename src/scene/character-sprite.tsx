@@ -1,4 +1,5 @@
 import { Circle, Ellipse, G, Line, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg'
+import type { Seat, SeatKind } from './layout'
 import type { SceneCharacter } from './use-scene-model'
 import { hashIndex, iso } from './iso'
 import { lookFor, type Look } from './palette'
@@ -38,7 +39,7 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
   const label = `${char.displayName}, ${char.title}, level ${char.level}. Open details.`
 
   return (
-    <G onPress={() => onSelect(char.id)} accessibilityRole="button" accessibilityLabel={label}>
+    <G onPress={() => onSelect(char.id)} accessibilityLabel={label}>
       {selected ? (
         <>
           <Ellipse cx={x} cy={y + 2} rx={25} ry={10} fill="#E9A94C" opacity={0.1} />
@@ -78,7 +79,6 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
           />
         )}
 
-        <NameTag look={look} char={char} selected={selected} dense={dense} />
       </G>
 
       {scene.confetti ? (
@@ -94,21 +94,65 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
   )
 }
 
+
+/** Name tags are rendered in a layer above everyone so they are never covered. */
+export function CharacterTag({
+  scene,
+  selected,
+  dense,
+  onSelect,
+}: Props) {
+  const { char, gx, gy } = scene
+  const look = lookFor(char)
+  const { x, y } = iso(gx, gy)
+  return (
+    <G onPress={() => onSelect(char.id)} transform={`translate(${x} ${y})`}>
+      <NameTag
+        look={look}
+        char={char}
+        selected={selected}
+        dense={dense}
+        lane={seatLane(scene.seat)}
+      />
+    </G>
+  )
+}
+
+const SEAT_GROUP_START: Partial<Record<SeatKind, number>> = {
+  desk: 1,
+  sofa: 1,
+  armchair: 4,
+  beanbag: 6,
+  window: 10,
+  ottoman: 12,
+  cushion: 14,
+}
+
+/** Stagger tags within a furniture group so neighbours do not cover each other. */
+function seatLane(seat: Seat): number {
+  const num = Number(seat.id.replace(/^\D+/, ''))
+  const start = SEAT_GROUP_START[seat.kind]
+  if (start != null && Number.isFinite(num)) return Math.max(0, Math.min(3, num - start))
+  return hashIndex(seat.id, 15, 3)
+}
+
 function NameTag({
   look,
   char,
   selected,
   dense,
+  lane,
 }: {
   look: Look
   char: SceneCharacter['char']
   selected: boolean
   dense: boolean
+  lane: number
 }) {
   const full = selected || char.status !== 'idle' || !dense
   const name = full ? char.displayName : char.displayName.split(' ')[0]
   const width = Math.max(30, name.length * 3.7 + 11)
-  const tagY = hashIndex(char.id, 15, 3) * 7
+  const tagY = lane * 7
   return (
     <G>
       <Rect

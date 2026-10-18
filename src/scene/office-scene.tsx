@@ -2,10 +2,11 @@ import { memo } from 'react'
 import { G, Svg } from 'react-native-svg'
 import type { OfficeSnapshot } from '@/api/types'
 import { Backdrop } from './backdrop'
-import { CharacterSprite } from './character-sprite'
+import { CharacterSprite, CharacterTag } from './character-sprite'
 import { buildFurniture } from './furniture'
 import { VIEWBOX } from './iso'
 import { SpeechBubble } from './speech-bubble'
+import { seatDepth } from './layout'
 import { useSceneModel } from './use-scene-model'
 
 const StaticBackdrop = memo(Backdrop)
@@ -27,9 +28,15 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
   const items = buildFurniture(occupied, now)
 
   for (const scene of characters) {
+    // Walking characters must stay above the floor furniture they pass; seated
+    // characters use their own seat's depth so they render just after it.
+    const depth =
+      scene.pose === 'walking'
+        ? scene.gx + scene.gy + 7.5
+        : seatDepth(scene.seat)
     items.push({
       key: `char-${scene.char.id}`,
-      depth: scene.gx + scene.gy + 0.05,
+      depth,
       node: (
         <CharacterSprite
           scene={scene}
@@ -54,6 +61,16 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
       />
       {items.map((item) => (
         <G key={item.key}>{item.node}</G>
+      ))}
+      {characters.map((scene) => (
+        <CharacterTag
+          key={`tag-${scene.char.id}`}
+          scene={scene}
+          now={now}
+          selected={selectedId === scene.char.id}
+          dense={characters.length > 9}
+          onSelect={onSelect}
+        />
       ))}
       {talking.map((scene) => (
         <SpeechBubble key={`bubble-${scene.char.id}`} scene={scene} now={now} />

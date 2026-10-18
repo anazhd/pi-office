@@ -66,6 +66,16 @@ export function deskSeatFor(index: number): Seat {
   return DESK_SEATS[index % DESK_SEATS.length]
 }
 
+/**
+ * Painter depth for a character at a seat. Lounge seats sit on (or in) furniture
+ * that spans several tiles, so they need to draw after the whole seat/back piece.
+ * Desk workers get a large boost so the next desk row's monitors and chairs cannot
+ * cover them; visibility wins over strict isometric ordering.
+ */
+export function seatDepth(seat: Seat): number {
+  return seat.kind === 'desk' ? seat.gx + seat.gy + 7.0 : seat.gx + seat.gy + 2.2
+}
+
 type PathOptions = {
   fromKind: SeatKind | 'door'
   fromRow?: 1 | 2
