@@ -53,5 +53,7 @@ export function hashString(input: string): number {
 }
 
 export function hashIndex(input: string, salt: number, size: number): number {
-  return (hashString(input) + Math.imul(salt + 1, 2654435761)) % size
+  // Math.imul is signed, so normalize the mixed hash to unsigned before the modulo; otherwise negative
+  // values leak out and index past the start of arrays (undefined look, lost variations).
+  return ((hashString(input) + Math.imul(salt + 1, 2654435761)) >>> 0) % size
 }

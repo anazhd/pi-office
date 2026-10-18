@@ -14,6 +14,7 @@ export type OfficeState = {
 const POLL_MS = 3000
 const FALLBACK_POLL_MS = 5000
 const MAX_BACKOFF_MS = 15_000
+const FETCH_TIMEOUT_MS = 8000
 
 export function useOffice(): OfficeState {
   const [snapshot, setSnapshot] = useState<OfficeSnapshot | null>(null)
@@ -30,26 +31,56 @@ export function useOffice(): OfficeState {
     let pollTimer: ReturnType<typeof setInterval> | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let backoff = 1000
+    let sseLive = false
+    // One request at a time: a tick is skipped while a fetch is in flight, and the controller lets us
+    // abort a slow response before it can overwrite something newer (SSE snapshot, newer poll).
+    let inflight: { controller: AbortController; cancelled: boolean } | null = null
+    // Server time of the newest snapshot we have applied; older snapshots arriving late are dropped.
+    let appliedNow = Number.NEGATIVE_INFINITY
 
+    const abortInflight = () => {
+      if (!inflight) return
+      inflight.cancelled = true
+      inflight.controller.abort()
+      inflight = null
+    }
+
+    /** Returns true when the snapshot was actually applied (not stale). */
     const apply = (next: OfficeSnapshot) => {
-      if (cancelled) return
+      if (cancelled) return false
+      if (next.now < appliedNow) return false
+      appliedNow = next.now
       hasData.current = true
       setSnapshot(next)
       setLastUpdate(Date.now())
       setError(null)
+      return true
     }
 
     const fail = (res: unknown) => {
       if (cancelled) return
       setError(res instanceof Error ? res.message : 'Office is unreachable')
-      if (!hasData.current) setConnection('offline')
+      if (!USE_MOCK && !sseLive) setConnection('offline')
     }
 
     const load = async () => {
+      if (cancelled || inflight) return
+      const request = { controller: new AbortController(), cancelled: false }
+      inflight = request
+      const timer = setTimeout(() => request.controller.abort(), FETCH_TIMEOUT_MS)
       try {
-        apply(await fetchOffice())
+        const next = await fetchOffice(request.controller.signal)
+        if (cancelled || request.cancelled) return
+        // A failed poll means the office is unreachable even if we have older data on screen.
+        if (apply(next)) {
+          if (!USE_MOCK && !sseLive) setConnection('polling')
+        }
       } catch (res) {
+        if (cancelled || request.cancelled) return
         fail(res)
+      } finally {
+        clearTimeout(timer)
+        if (inflight === request) inflight = null
       }
     }
 
@@ -60,7 +91,6 @@ export function useOffice(): OfficeState {
 
     const startPolling = (interval = POLL_MS) => {
       if (pollTimer || cancelled) return
-      if (!hasData.current && connection !== 'offline') setConnection('polling')
       void load()
       pollTimer = setInterval(() => void load(), interval)
     }
@@ -71,6 +101,7 @@ export function useOffice(): OfficeState {
       pollTimer = setInterval(() => void load(), 4200)
       return () => {
         cancelled = true
+        abortInflight()
         stopPolling()
       }
     }
@@ -83,6 +114,7 @@ export function useOffice(): OfficeState {
       startPolling(POLL_MS)
       return () => {
         cancelled = true
+        abortInflight()
         stopPolling()
       }
     }
@@ -98,6 +130,8 @@ export function useOffice(): OfficeState {
 
     const connect = () => {
       if (cancelled) return
+      // Drop any poll still in flight so it cannot land after the stream's first snapshot.
+      abortInflight()
       try {
         source = new EventSource(apiUrl('/api/stream'))
       } catch (res) {
@@ -111,6 +145,8 @@ export function useOffice(): OfficeState {
         const next = parseSnapshot((event as MessageEvent<string>).data)
         if (!next) return
         backoff = 1000
+        sseLive = true
+        abortInflight()
         stopPolling()
         setConnection('live')
         apply(next)
@@ -119,6 +155,8 @@ export function useOffice(): OfficeState {
       source.addEventListener('open', () => {
         if (cancelled) return
         backoff = 1000
+        sseLive = true
+        abortInflight()
         stopPolling()
         setConnection('live')
       })
@@ -127,6 +165,7 @@ export function useOffice(): OfficeState {
         source?.close()
         source = null
         if (cancelled) return
+        sseLive = false
         setConnection(hasData.current ? 'connecting' : 'offline')
         startPolling(FALLBACK_POLL_MS)
         scheduleReconnect()
@@ -140,6 +179,7 @@ export function useOffice(): OfficeState {
       source?.close()
       source = null
       if (reconnectTimer) clearTimeout(reconnectTimer)
+      abortInflight()
       stopPolling()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

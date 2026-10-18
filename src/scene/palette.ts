@@ -18,7 +18,7 @@ export function providerColor(provider: string, model = ''): string {
   const key = provider.toLowerCase()
   if (key === 'openrouter' && /deepseek/i.test(model)) return '#4D6BFE'
   if (PROVIDER_COLORS[key]) return PROVIDER_COLORS[key]
-  const hue = FALLBACK_HUES[Math.abs(hashIndex(key, 3, FALLBACK_HUES.length)) % FALLBACK_HUES.length]
+  const hue = FALLBACK_HUES[hashIndex(key, 3, FALLBACK_HUES.length)]
   return hsl(hue, 42, 52)
 }
 
