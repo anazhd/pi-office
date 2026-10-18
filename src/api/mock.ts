@@ -221,6 +221,22 @@ const PHASES: Array<Record<string, ActiveSession[]>> = [
     'openrouter/qwen/qwen3.5-coder': [active('9c31', 'qwen-playground', 'tool', 'write', 0, 2)],
     'openrouter/deepseek/deepseek-r1': [active('7d12', 't3-chat', 'thinking', null, 0, 5)],
   },
+  // Crowd: every roster model is working at once. Exceeds the 10 desks of the original
+  // layout, so this exercises the overflow bench and the standing spots.
+  {
+    'anthropic/claude-opus-5-5': [active('a1c4', 'pi-office', 'tool', 'edit', 0, 1)],
+    'openai/gpt-6.1-sol': [active('b208', 'pi-stats', 'thinking', null, 0, 2)],
+    'openai-codex/gpt-5.3-codex': [active('d39e', 'pi-office', 'tool', 'bash', 0, 1)],
+    'google/gemini-3.1-pro': [active('c71f', 'web-dashboard', 'thinking', null, 0, 3)],
+    'deepseek/deepseek-v4.1-flash': [active('e5aa', 't3-chat', 'tool', 'write', 0, 1)],
+    'openrouter/deepseek/deepseek-r1': [active('7d12', 't3-chat', 'thinking', null, 0, 5)],
+    'xai/grok-5': [active('f0b7', 'research', 'tool', 'web_search', 0, 2)],
+    'openrouter/qwen/qwen3.5-coder': [active('9c31', 'qwen-playground', 'tool', 'read', 0, 2)],
+    'anthropic/claude-haiku-4-5': [active('a88d', 'notes', 'thinking', null, 0, 1)],
+    'mistral/mistral-large-3': [active('6e0c', 'pi-stats', 'tool', 'grep', 0, 2)],
+    'google/gemini-3.1-flash': [active('3f9a', 'web-dashboard', 'tool', 'fetch_content', 0, 1)],
+    'meta/llama-5-70b': [active('8b47', 'scratch', 'thinking', null, 0, 4)],
+  },
 ]
 
 let phase = 0

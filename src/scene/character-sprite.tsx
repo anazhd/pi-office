@@ -23,8 +23,9 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
   const seatedLow = scene.seat.kind === 'beanbag' || scene.seat.kind === 'cushion'
 
   const walking = pose === 'walking'
+  const waiting = pose === 'waiting'
   const typing = pose === 'typing'
-  const bob = walking ? 0 : Math.sin(phase * 1.5 + offset) * 1
+  const bob = walking || waiting ? 0 : Math.sin(phase * 1.5 + offset) * 1
   const stride = Math.sin(phase * 9 + offset)
   const typeBeat = Math.sin(phase * 7.5 + offset) * 1.2
 
@@ -59,8 +60,13 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
       <Ellipse cx={x} cy={y + 2} rx={17} ry={6.5} fill="#1A120B" opacity={0.3} />
 
       <G transform={`translate(${x} ${y})`}>
-        {walking ? (
-          <WalkingBody look={look} stride={stride} phase={phase} />
+        {walking || waiting ? (
+          <WalkingBody
+            look={look}
+            stride={walking ? stride : 0}
+            phase={phase}
+            still={waiting}
+          />
         ) : (
           <SeatedBody
             look={look}
@@ -131,6 +137,9 @@ const SEAT_GROUP_START: Partial<Record<SeatKind, number>> = {
 /** Stagger tags within a furniture group so neighbours do not cover each other. */
 function seatLane(seat: Seat): number {
   const num = Number(seat.id.replace(/^\D+/, ''))
+  // Overflow desks and standing spots sit about one tile apart, so cycle the lanes to keep name tags apart.
+  if (seat.row === 3 && Number.isFinite(num)) return (num - 11) % 4
+  if (seat.kind === 'standing' && Number.isFinite(num)) return num % 4
   const start = SEAT_GROUP_START[seat.kind]
   if (start != null && Number.isFinite(num)) return Math.max(0, Math.min(3, num - start))
   return hashIndex(seat.id, 15, 3)
@@ -196,12 +205,14 @@ function WalkingBody({
   look,
   stride,
   phase,
+  still = false,
 }: {
   look: Look
   stride: number
   phase: number
+  still?: boolean
 }) {
-  const bounce = Math.abs(Math.sin(phase * 9)) * 1.8
+  const bounce = still ? 0 : Math.abs(Math.sin(phase * 9)) * 1.8
   const legA = stride * 20
   const legB = -stride * 20
   return (

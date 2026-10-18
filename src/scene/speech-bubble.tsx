@@ -54,6 +54,24 @@ export function SpeechBubble({ scene, now }: { scene: SceneCharacter; now: numbe
   const baseY = iso(gx, gy).y - 76 - scene.bubbleLane * 52
   const provider = providerColor(char.provider, char.model)
 
+  if (scene.pose === 'waiting') {
+    return (
+      <G>
+        <BubbleShell x={x} y={baseY} width={96} height={26} provider={provider} char={char} />
+        <SvgText
+          x={x}
+          y={baseY + 16.5}
+          textAnchor="middle"
+          fontSize={7.6}
+          fontFamily="DMSans_500Medium"
+          fill="#7B6A57"
+        >
+          waiting for a desk
+        </SvgText>
+      </G>
+    )
+  }
+
   if (char.status === 'thinking') {
     return (
       <G>

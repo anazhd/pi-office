@@ -51,7 +51,7 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
 
   items.sort((a, b) => a.depth - b.depth)
 
-  const talking = characters.filter((scene) => scene.pose === 'typing')
+  const talking = characters.filter((scene) => scene.pose === 'typing' || scene.pose === 'waiting')
 
   return (
     <Svg viewBox={VIEWBOX} width="100%" height="100%" preserveAspectRatio="xMidYMid meet">

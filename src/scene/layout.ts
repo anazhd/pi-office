@@ -1,13 +1,22 @@
 import type { Point } from './iso'
 
-export type SeatKind = 'desk' | 'sofa' | 'armchair' | 'beanbag' | 'window' | 'cushion' | 'ottoman'
+export type SeatKind =
+  | 'desk'
+  | 'sofa'
+  | 'armchair'
+  | 'beanbag'
+  | 'window'
+  | 'cushion'
+  | 'ottoman'
+  | 'standing'
 
 export type Seat = {
   id: string
   gx: number
   gy: number
   kind: SeatKind
-  row?: 1 | 2
+  /** Desk rows: 1 and 2 are the hot-desk benches, 3 is the overflow bench in the south-west room. */
+  row?: 1 | 2 | 3
   /** Facing direction for sprites that care (desk work faces the monitor). */
   facing: 'up' | 'right' | 'left'
 }
@@ -15,6 +24,12 @@ export type Seat = {
 export const CORRIDOR_Y = 5.55
 export const WEST_AISLE_X = 0.52
 export const EAST_AISLE_X = 7.48
+/** Walkway column from the entrance up to the corridor. Overflow traffic shares it. */
+export const ENTRY_LANE_X = 6.9
+/** Lane south of the overflow chairs; overflow workers enter and leave their chairs here. */
+export const OVERFLOW_LANE_Y = 8.45
+/** Standing spots for workers beyond desk capacity. */
+export const STANDING_LANE_Y = 9.3
 
 export const DESK_SEATS: Seat[] = [
   { id: 'd1', gx: 1.35, gy: 2.35, kind: 'desk', row: 1, facing: 'up' },
@@ -27,7 +42,18 @@ export const DESK_SEATS: Seat[] = [
   { id: 'd8', gx: 3.75, gy: 4.5, kind: 'desk', row: 2, facing: 'up' },
   { id: 'd9', gx: 4.95, gy: 4.5, kind: 'desk', row: 2, facing: 'up' },
   { id: 'd10', gx: 6.15, gy: 4.5, kind: 'desk', row: 2, facing: 'up' },
+  // Overflow bench (row 3) along the south-west wall: same monitor/chair geometry as the
+  // benches above, so the sprite, screen and chair line up exactly as at the other desks.
+  { id: 'd11', gx: 1.3, gy: 7.9, kind: 'desk', row: 3, facing: 'up' },
+  { id: 'd12', gx: 2.28, gy: 7.9, kind: 'desk', row: 3, facing: 'up' },
+  { id: 'd13', gx: 3.26, gy: 7.9, kind: 'desk', row: 3, facing: 'up' },
+  { id: 'd14', gx: 4.24, gy: 7.9, kind: 'desk', row: 3, facing: 'up' },
+  { id: 'd15', gx: 5.22, gy: 7.9, kind: 'desk', row: 3, facing: 'up' },
+  { id: 'd16', gx: 6.2, gy: 7.9, kind: 'desk', row: 3, facing: 'up' },
 ]
+
+/** Total hot-desk capacity. Workers beyond this stand at STANDING_SPOTS. */
+export const DESK_CAPACITY = DESK_SEATS.length
 
 export const LOUNGE_SEATS: Seat[] = [
   { id: 'l1', gx: 9.55, gy: 5.12, kind: 'sofa', facing: 'right' },
@@ -63,7 +89,20 @@ export function loungeSeatFor(index: number): Seat {
 }
 
 export function deskSeatFor(index: number): Seat {
-  return DESK_SEATS[index % DESK_SEATS.length]
+  return DESK_SEATS[index]
+}
+
+/** Where a working character waits when every desk is taken (south of the overflow bench). */
+export function standingSeatFor(index: number): Seat {
+  const column = index % 6
+  const row = Math.floor(index / 6)
+  return {
+    id: `s${index}`,
+    gx: 1.6 + column * 0.85,
+    gy: STANDING_LANE_Y - row * 0.45,
+    kind: 'standing',
+    facing: 'up',
+  }
 }
 
 /**
@@ -78,9 +117,71 @@ export function seatDepth(seat: Seat): number {
 
 type PathOptions = {
   fromKind: SeatKind | 'door'
-  fromRow?: 1 | 2
+  fromRow?: 1 | 2 | 3
   toKind: SeatKind
-  toRow?: 1 | 2
+  toRow?: 1 | 2 | 3
+}
+
+/**
+ * Polyline from a seat out to the corridor (gy = CORRIDOR_Y). Row 1 leaves through the
+ * west aisle, overflow and standing spots leave through the entry column, everything
+ * else goes straight south to the corridor.
+ */
+function exitFrom(gx: number, gy: number, kind: SeatKind | 'door', row?: 1 | 2 | 3): Point[] {
+  if (kind === 'desk' && row === 1) {
+    return [
+      { gx, gy: 2.72 },
+      { gx: WEST_AISLE_X, gy: 2.72 },
+      { gx: WEST_AISLE_X, gy: CORRIDOR_Y },
+    ]
+  }
+  if (kind === 'desk' && row === 3) {
+    return [
+      { gx, gy: OVERFLOW_LANE_Y },
+      { gx: ENTRY_LANE_X, gy: OVERFLOW_LANE_Y },
+      { gx: ENTRY_LANE_X, gy: CORRIDOR_Y },
+    ]
+  }
+  if (kind === 'standing') {
+    return [
+      { gx, gy: STANDING_LANE_Y },
+      { gx: ENTRY_LANE_X, gy: STANDING_LANE_Y },
+      { gx: ENTRY_LANE_X, gy: CORRIDOR_Y },
+    ]
+  }
+  return [{ gx, gy: CORRIDOR_Y }]
+}
+
+/** Same as exitFrom but ordered from the corridor into the seat. */
+function entryTo(gx: number, gy: number, kind: SeatKind, row?: 1 | 2 | 3): Point[] {
+  if (kind === 'desk' && row === 1) {
+    return [
+      { gx: WEST_AISLE_X, gy: CORRIDOR_Y },
+      { gx: WEST_AISLE_X, gy: 2.72 },
+      { gx, gy: 2.72 },
+      { gx, gy },
+    ]
+  }
+  if (kind === 'desk' && row === 3) {
+    return [
+      { gx: ENTRY_LANE_X, gy: CORRIDOR_Y },
+      { gx: ENTRY_LANE_X, gy: OVERFLOW_LANE_Y },
+      { gx, gy: OVERFLOW_LANE_Y },
+      { gx, gy },
+    ]
+  }
+  if (kind === 'standing') {
+    return [
+      { gx: ENTRY_LANE_X, gy: CORRIDOR_Y },
+      { gx: ENTRY_LANE_X, gy: STANDING_LANE_Y },
+      { gx, gy: STANDING_LANE_Y },
+      { gx, gy },
+    ]
+  }
+  return [
+    { gx, gy: CORRIDOR_Y },
+    { gx, gy },
+  ]
 }
 
 /** Route through the west aisle / south corridor so nobody walks through a bench. */
@@ -94,24 +195,20 @@ export function buildPath(from: Point, to: Point, opts: PathOptions): Point[] {
     points.push(cursor)
   }
 
-  if (opts.fromRow === 1) {
-    push(cursor.gx, 2.72)
-    push(WEST_AISLE_X, 2.72)
-    push(WEST_AISLE_X, CORRIDOR_Y)
+  const enters = entryTo(to.gx, to.gy, opts.toKind, opts.toRow)
+  const belowDesks = opts.toRow === 3 || opts.toKind === 'standing'
+
+  if (opts.fromKind === 'door' && belowDesks) {
+    // Arrivals heading for the south side go straight up the entry column, no corridor detour.
+    push(ENTRY_LANE_X, enters[1].gy)
   } else {
-    push(cursor.gx, CORRIDOR_Y)
+    for (const p of exitFrom(from.gx, from.gy, opts.fromKind, opts.fromRow)) push(p.gx, p.gy)
+    // Walk along the corridor between the two junctions.
+    const junction = enters[0]
+    push(junction.gx, CORRIDOR_Y)
   }
 
-  if (opts.toRow === 1) {
-    push(WEST_AISLE_X, CORRIDOR_Y)
-    push(WEST_AISLE_X, 2.72)
-    push(to.gx, 2.72)
-    push(to.gx, to.gy)
-  } else {
-    push(to.gx, CORRIDOR_Y)
-    push(to.gx, to.gy)
-  }
-
+  for (const p of enters.slice(1)) push(p.gx, p.gy)
   push(to.gx, to.gy)
   return points
 }
@@ -148,6 +245,7 @@ export function pointAlong(points: Point[], t: number): Point {
 export const DESK_BENCHES = [
   { gx: 0.8, gy: 1.14, w: 6.2, d: 0.7 },
   { gx: 0.8, gy: 3.3, w: 6.2, d: 0.7 },
+  { gx: 1.0, gy: 6.7, w: 5.75, d: 0.7 },
 ]
 
 export const WINDOWS = {

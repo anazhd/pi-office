@@ -4,15 +4,20 @@ import { clamp, easeInOut } from './iso'
 import {
   buildPath,
   deskSeatFor,
-  DESK_SEATS,
+  DESK_CAPACITY,
   DOOR,
   loungeSeatFor,
   pathLength,
   pointAlong,
+  standingSeatFor,
   type Seat,
 } from './layout'
 
-export type CharacterPose = 'seated' | 'walking' | 'typing'
+/**
+ * seated: idle in the lounge. typing: working at a desk. waiting: working but every desk
+ * is taken, so the character stands by the overflow bench instead of pretending to type.
+ */
+export type CharacterPose = 'seated' | 'walking' | 'typing' | 'waiting'
 
 export type SceneCharacter = {
   char: Character
@@ -42,6 +47,13 @@ type Plan = {
 
 const WALK_MS_PER_TILE = 140
 
+/** Stack bubbles so neighbours at the same desk row or standing row do not cover each other. */
+function bubbleLaneFor(plan: Plan): number {
+  if (plan.deskIndex != null) return plan.deskIndex % 3
+  if (plan.seat.kind === 'standing') return Number(plan.seat.id.slice(1)) % 3
+  return 0
+}
+
 export function useSceneModel(snapshot: OfficeSnapshot | null, now: number): SceneCharacter[] {
   const plansRef = useRef<Map<string, Plan>>(new Map())
   const deskRef = useRef<Map<string, number>>(new Map())
@@ -70,7 +82,7 @@ export function useSceneModel(snapshot: OfficeSnapshot | null, now: number): Sce
     const used = new Set(deskAssignments.values())
     for (const char of snapshot.characters) {
       if (char.status === 'idle' || deskAssignments.has(char.id)) continue
-      for (let i = 0; i < DESK_SEATS.length; i++) {
+      for (let i = 0; i < DESK_CAPACITY; i++) {
         if (!used.has(i)) {
           deskAssignments.set(char.id, i)
           used.add(i)
@@ -79,11 +91,14 @@ export function useSceneModel(snapshot: OfficeSnapshot | null, now: number): Sce
       }
     }
 
+    let waitingCount = 0
     for (let index = 0; index < snapshot.characters.length; index++) {
       const char = snapshot.characters[index]
       const deskIndex = deskAssignments.get(char.id) ?? null
-      const seat =
-        deskIndex != null ? deskSeatFor(deskIndex) : loungeSeatFor(index)
+      let seat: Seat
+      if (deskIndex != null) seat = deskSeatFor(deskIndex)
+      else if (char.status !== 'idle') seat = standingSeatFor(waitingCount++)
+      else seat = loungeSeatFor(index)
       const previous = plansRef.current.get(char.id)
       const isNew = !firstRender && !seenRef.current.has(char.id)
 
@@ -160,7 +175,13 @@ export function useSceneModel(snapshot: OfficeSnapshot | null, now: number): Sce
       posRef.current.set(plan.char.id, { gx, gy })
 
       const working = plan.char.status !== 'idle'
-      const pose: CharacterPose = walking ? 'walking' : working ? 'typing' : 'seated'
+      const pose: CharacterPose = walking
+        ? 'walking'
+        : working
+          ? plan.deskIndex != null
+            ? 'typing'
+            : 'waiting'
+          : 'seated'
 
       out.push({
         char: plan.char,
@@ -174,7 +195,7 @@ export function useSceneModel(snapshot: OfficeSnapshot | null, now: number): Sce
         enteredAt: plan.enteredAt,
         isNew: plan.isNew,
         confetti: plan.isNew && now < plan.enteredAt + plan.walkDuration + 2400,
-        bubbleLane: plan.deskIndex == null ? 0 : plan.deskIndex % 3,
+        bubbleLane: bubbleLaneFor(plan),
       })
     }
     return out
