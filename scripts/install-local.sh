@@ -13,7 +13,13 @@ HOST=${HOST:-127.0.0.1}
 UNIT_DIR="$HOME/.config/systemd/user"
 NODE=$(readlink -f "$(command -v node)") # resolve fnm/nvm shims to the real binary
 
-npm run build
+# Force a production build: the mock fixture must never be shipped.
+env -u EXPO_PUBLIC_OFFICE_MOCK npm run build
+if grep -R -q -F -- 'qwen/qwen3.5-coder' dist; then
+  echo "ERROR: production build contains the mock fixture (qwen/qwen3.5-coder)." >&2
+  echo "Refusing to install a build made with EXPO_PUBLIC_OFFICE_MOCK." >&2
+  exit 1
+fi
 mkdir -p "$UNIT_DIR"
 
 cat > "$UNIT_DIR/pi-office.service" <<UNIT

@@ -1,0 +1,120 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import type { OfficeSnapshot } from '../../shared/office-types.ts'
+import { SseHub, snapshotHash } from '../sse.ts'
+
+function snapshot(now: number, outputTokens = 0): OfficeSnapshot {
+  return {
+    now,
+    characters: outputTokens
+      ? [
+          {
+            id: 'anthropic/claude',
+            provider: 'anthropic',
+            model: 'claude',
+            displayName: 'Claude',
+            stats: {
+              messages: 1,
+              outputTokens,
+              inputTokens: 0,
+              toolCalls: 0,
+              sessions: 1,
+              todayOutputTokens: outputTokens,
+              firstSeen: 1,
+              lastSeen: now,
+            },
+            level: 1,
+            title: 'Intern',
+            xp: outputTokens,
+            levelProgress: 0,
+            status: 'idle',
+            active: [],
+          },
+        ]
+      : [],
+    totals: {
+      activeSessions: 0,
+      workingCharacters: 0,
+      todayOutputTokens: outputTokens,
+      lifetimeOutputTokens: outputTokens,
+    },
+  }
+}
+
+function fakeReq(): any {
+  return new EventEmitter()
+}
+
+function fakeRes(writeResult = true): any {
+  const res: any = new EventEmitter()
+  res.writableLength = 0
+  res.written = []
+  res.ended = false
+  res.writeHead = () => {}
+  res.write = (chunk: string) => {
+    res.written.push(String(chunk))
+    return writeResult
+  }
+  res.end = () => {
+    res.ended = true
+  }
+  return res
+}
+
+test('snapshot hash ignores the clock', () => {
+  assert.equal(snapshotHash(snapshot(1)), snapshotHash(snapshot(999)))
+  assert.notEqual(snapshotHash(snapshot(1)), snapshotHash(snapshot(1, 5)))
+})
+
+test('sse: caps concurrent clients', () => {
+  const hub = new SseHub({ maxClients: 1 })
+  assert.equal(hub.add(fakeReq(), fakeRes(), snapshot(1)), true)
+  assert.equal(hub.add(fakeReq(), fakeRes(), snapshot(1)), false)
+  assert.equal(hub.size, 1)
+  hub.closeAll()
+  assert.equal(hub.size, 0)
+})
+
+test('sse: idle ticks (only now changes) are not resent', () => {
+  const hub = new SseHub()
+  hub.prime(snapshot(1))
+  const res = fakeRes()
+  hub.add(fakeReq(), res, snapshot(1))
+  res.written.length = 0
+
+  hub.broadcast(snapshot(2))
+  assert.equal(res.written.length, 0)
+
+  hub.broadcast(snapshot(2, 10))
+  assert.equal(res.written.length, 1)
+  hub.closeAll()
+})
+
+test('sse: drops a client whose write buffer is over the cap', () => {
+  const hub = new SseHub({ maxBufferedBytes: 10 })
+  const res = fakeRes()
+  hub.add(fakeReq(), res, snapshot(1))
+  res.writableLength = 11
+  hub.broadcast(snapshot(1, 10))
+  assert.equal(hub.size, 0)
+  assert.equal(res.ended, true)
+})
+
+test('sse: drops a client that never drains after a false write', async () => {
+  const hub = new SseHub({ drainTimeoutMs: 5 })
+  const res = fakeRes(false)
+  hub.add(fakeReq(), res, snapshot(1))
+  assert.equal(hub.size, 1)
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  assert.equal(hub.size, 0)
+})
+
+test('sse: request errors clean up the client', () => {
+  const hub = new SseHub()
+  const req = fakeReq()
+  hub.add(req, fakeRes(), snapshot(1))
+  assert.equal(hub.size, 1)
+  req.emit('error', new Error('boom'))
+  assert.equal(hub.size, 0)
+})

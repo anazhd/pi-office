@@ -90,7 +90,14 @@ export function buildOfficeSnapshot(input: SnapshotInput): OfficeSnapshot {
     })
     activeByModel.set(id, list)
   }
-  for (const list of activeByModel.values()) list.sort((a, b) => b.since - a.since)
+  // `active[0]` is the representative session the client should display: when any session is running a
+  // tool, the newest tool session; otherwise the newest thinking session. The rest follow by recency.
+  for (const list of activeByModel.values()) {
+    list.sort((a, b) => {
+      if (a.status !== b.status) return a.status === 'tool' ? -1 : 1
+      return b.since - a.since
+    })
+  }
 
   const characters: Character[] = []
   for (const entry of input.roster) {

@@ -1,7 +1,7 @@
 // Integration-ish tests for the I/O layer: real temp directories, real files, no ~/.pi access.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, writeFile, appendFile, truncate } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, appendFile, truncate, rename, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OfficeStore, startOfLocalDay } from '../sessions.ts'
@@ -214,4 +214,73 @@ test('store: missing sessions directory is not fatal', async () => {
   } finally {
     store.stop()
   }
+})
+
+
+test('store: atomic replacement (larger file, new inode) is reparsed from the start', async () => {
+  await withStore(async (dir, store) => {
+    const file = join(dir, 'sessions', 'replace.jsonl')
+    await mkdir(join(dir, 'sessions'), { recursive: true })
+    const head = header('sess-replace') + modelChange('anthropic', 'claude-opus-5-5')
+    await writeFile(file, head + assistant({ stopReason: 'stop', output: 100, start: 1792000000000 }))
+    await store.start()
+    assert.equal(store.snapshot().characters[0].stats.outputTokens, 100)
+
+    // Replace the whole file via rename (new inode) with a larger log: old bytes must not be re-read as an append.
+    const replacement =
+      head +
+      assistant({ stopReason: 'stop', output: 200, start: 1792000001000 }) +
+      assistant({ stopReason: 'stop', output: 300, start: 1792000002000 })
+    const temp = join(dir, 'sessions', 'replace.tmp')
+    await writeFile(temp, replacement)
+    await rename(temp, file)
+    await store.refresh()
+    const c = store.snapshot().characters[0]
+    assert.equal(c.stats.messages, 2)
+    assert.equal(c.stats.outputTokens, 500)
+  })
+})
+
+test('store: same-size rewrite with a newer mtime is reparsed', async () => {
+  await withStore(async (dir, store) => {
+    const file = join(dir, 'sessions', 'same-size.jsonl')
+    await mkdir(join(dir, 'sessions'), { recursive: true })
+    const head = header('sess-same') + modelChange('anthropic', 'claude-opus-5-5')
+    const before = head + assistant({ stopReason: 'stop', output: 100, start: 1792000000000 })
+    const after = head + assistant({ stopReason: 'stop', output: 700, start: 1792000000000 })
+    assert.equal(Buffer.byteLength(before), Buffer.byteLength(after))
+    await writeFile(file, before)
+    await store.start()
+    assert.equal(store.snapshot().characters[0].stats.outputTokens, 100)
+
+    await writeFile(file, after)
+    const future = new Date(Date.now() + 5_000)
+    await utimes(file, future, future)
+    await store.refresh()
+    assert.equal(store.snapshot().characters[0].stats.outputTokens, 700)
+    assert.equal(store.snapshot().characters[0].stats.messages, 1)
+  })
+})
+
+test('store: truncation inside a partial tail restarts cleanly', async () => {
+  await withStore(async (dir, store) => {
+    const file = join(dir, 'sessions', 'partial-tail.jsonl')
+    await mkdir(join(dir, 'sessions'), { recursive: true })
+    const head = header('sess-tail') + modelChange('anthropic', 'claude-opus-5-5')
+    const first = assistant({ stopReason: 'stop', output: 100, start: 1792000000000 })
+    const prefix = head + first
+    const offset = Buffer.byteLength(prefix)
+    const partial = '{"type":"message","timestamp":"2026'
+    await writeFile(file, prefix + partial)
+    await store.start()
+    assert.equal(store.snapshot().characters[0].stats.outputTokens, 100)
+
+    // Shrink into the half-written tail (size is still > the old complete-line offset).
+    await truncate(file, offset + 5)
+    await appendFile(file, '\n' + assistant({ stopReason: 'stop', output: 42, start: 1792000001000 }))
+    await store.refresh()
+    const c = store.snapshot().characters[0]
+    assert.equal(c.stats.messages, 2)
+    assert.equal(c.stats.outputTokens, 142)
+  })
 })

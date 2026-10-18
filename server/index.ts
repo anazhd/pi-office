@@ -7,19 +7,19 @@
 //
 // Zero dependencies. Binds 127.0.0.1:6702 by default (HOST / PORT env).
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { createHash } from 'node:crypto'
-import { readFile, stat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { extname, join, resolve, sep } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import type { OfficeSnapshot } from '../shared/office-types.ts'
 import { OfficeStore, sessionsDir } from './sessions.ts'
+import { SseHub } from './sse.ts'
 
 const HOST = process.env.HOST || '127.0.0.1'
 const PORT = Number(process.env.PORT ?? 6702) || 6702
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const DIST = join(ROOT, 'dist')
-const HEARTBEAT_MS = 25_000
 const PUSH_MS = 1_000
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -66,68 +66,7 @@ const NOT_BUILT_HTML = `<!doctype html>
 
 // ---------------------------------------------------------------- SSE hub
 
-type Client = {
-  res: ServerResponse
-  heartbeat: ReturnType<typeof setInterval>
-  cleanup: () => void
-}
-
-const clients = new Set<Client>()
-let lastPushed = ''
-
-const hash = (s: string): string => createHash('sha1').update(s).digest('hex')
-
-function sseFrame(snapshot: OfficeSnapshot): string {
-  return `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`
-}
-
-function send(client: Client, chunk: string): void {
-  try {
-    client.res.write(chunk)
-  } catch {
-    client.cleanup()
-  }
-}
-
-/** Push the snapshot to every connected client when it changed (hash comparison keeps this cheap). */
-function pushSnapshot(snapshot: OfficeSnapshot): void {
-  const frame = sseFrame(snapshot)
-  const h = hash(frame)
-  if (h === lastPushed) return
-  lastPushed = h
-  for (const client of clients) send(client, frame)
-}
-
-function addClient(req: IncomingMessage, res: ServerResponse): void {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-    'Access-Control-Allow-Origin': '*',
-  })
-  res.write('retry: 3000\n\n')
-
-  let closed = false
-  const heartbeat = setInterval(() => send(client, ': ping\n\n'), HEARTBEAT_MS)
-  heartbeat.unref()
-  const cleanup = () => {
-    if (closed) return
-    closed = true
-    clearInterval(heartbeat)
-    clients.delete(client)
-    try {
-      res.end()
-    } catch {
-      /* already gone */
-    }
-  }
-  const client: Client = { res, heartbeat, cleanup }
-  clients.add(client)
-  req.on('close', cleanup)
-  res.on('close', cleanup)
-  send(client, sseFrame(store.snapshot()))
-}
+const hub = new SseHub()
 
 // ---------------------------------------------------------------- static files
 
@@ -193,13 +132,36 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, pathname: 
     }
   }
 
-  const body = await readFile(file)
+  await sendFile(req, res, file, info, pathname)
+}
+
+/** HEAD answers from stat; GET streams the file and destroys the stream if the client goes away. */
+export async function sendFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  file: string,
+  info: { size: number },
+  pathname: string,
+): Promise<void> {
   res.writeHead(200, {
     'Content-Type': CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
-    'Content-Length': body.byteLength,
+    'Content-Length': info.size,
     'Cache-Control': cacheControl(pathname),
   })
-  res.end(req.method === 'HEAD' ? undefined : body)
+  if (req.method === 'HEAD') {
+    res.end()
+    return
+  }
+  const stream = createReadStream(file)
+  const onClose = () => {
+    if (!res.writableEnded) stream.destroy()
+  }
+  res.on('close', onClose)
+  try {
+    await pipeline(stream, res)
+  } finally {
+    res.off('close', onClose)
+  }
 }
 
 async function statOrNull(path: string) {
@@ -242,7 +204,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     if (pathname === '/api/health') return sendJson(req, res, 200, { ok: true })
     if (pathname === '/api/office') return sendJson(req, res, 200, store.snapshot())
-    if (pathname === '/api/stream') return addClient(req, res)
+    if (pathname === '/api/stream') {
+      if (!hub.add(req, res, store.snapshot())) {
+        res.writeHead(503, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Retry-After': '5',
+          'Access-Control-Allow-Origin': '*',
+        })
+        res.end('Too many stream clients\n')
+      }
+      return
+    }
     return sendJson(req, res, 404, { ok: false, error: 'not found' })
   }
 
@@ -274,19 +247,22 @@ const server = createServer((req, res) => {
     }
   })
 })
+server.headersTimeout = 20_000
+server.requestTimeout = 30_000
+server.keepAliveTimeout = 5_000
 
 async function main(): Promise<void> {
   await store.start()
   // Time-based transitions (and anything the watcher missed) reach SSE clients from here.
   const push = setInterval(() => {
     try {
-      pushSnapshot(store.snapshot())
+      hub.broadcast(store.snapshot())
     } catch {
       /* never crash the timer */
     }
   }, PUSH_MS)
   push.unref()
-  lastPushed = hash(sseFrame(store.snapshot()))
+  hub.prime(store.snapshot())
 
   server.listen(PORT, HOST, () => {
     console.log(`pi-office listening on http://${HOST}:${PORT}`)
@@ -297,7 +273,7 @@ async function main(): Promise<void> {
 
 function shutdown(): void {
   store.stop()
-  for (const client of clients) client.cleanup()
+  hub.closeAll()
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 2_000).unref()
 }

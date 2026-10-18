@@ -201,3 +201,22 @@ test('snapshot: empty roster -> empty characters', () => {
     lifetimeOutputTokens: 0,
   })
 })
+
+test('snapshot: active[0] is a tool session even when a thinking session is newer', () => {
+  const snap = buildOfficeSnapshot({
+    now: NOW,
+    sessions: [
+      session({ key: 'thinking-newest', status: 'thinking', since: NOW - 1000 }),
+      session({ key: 'tool-older', status: 'tool', tool: 'bash', since: NOW - 5000 }),
+      session({ key: 'thinking-old', status: 'thinking', since: NOW - 8000 }),
+    ],
+    roster: [entry({ id: 'anthropic/claude-opus-5-5', provider: 'anthropic', model: 'claude-opus-5-5' })],
+    nameFor: (_p, m) => m,
+  })
+  const c = snap.characters[0]
+  assert.equal(c.status, 'tool')
+  assert.deepEqual(
+    c.active.map((a) => a.key),
+    ['tool-older', 'thinking-newest', 'thinking-old'],
+  )
+})

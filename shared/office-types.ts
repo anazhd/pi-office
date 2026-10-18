@@ -40,7 +40,11 @@ export type Character = {
   levelProgress: number
   /** 'idle' when no active sessions, otherwise the "busiest" active status (tool > thinking). */
   status: ActivityStatus
-  /** Active sessions for this model, most recent first. Empty when idle. */
+  /**
+   * Active sessions for this model. `active[0]` is the representative session: the newest `tool` session
+   * when `status` is `'tool'`, otherwise the newest thinking session. The rest follow by recency.
+   * Empty when idle.
+   */
   active: ActiveSession[]
 }
 

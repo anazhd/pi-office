@@ -9,12 +9,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { OfficeSnapshot } from '../shared/office-types.ts'
 import {
-  aggregateRoster,
   applyEvent,
   emptyState,
+  IncrementalRoster,
   parseChunk,
   sessionKey,
-  type Contribution,
   type RosterEntry,
   type SessionState,
 } from './parse.ts'
@@ -31,8 +30,12 @@ const MAX_LINE_BYTES = 64 * 1024 * 1024
 export type FileState = {
   /** Bytes already consumed (complete lines only). */
   offset: number
+  /** Size at the last scan (used to detect truncation even when it lands inside a partial tail). */
   size: number
   mtime: number
+  /** File identity; an atomic replace (new inode) restarts parsing from byte 0. */
+  dev: number
+  ino: number
   state: SessionState
 }
 
@@ -94,9 +97,7 @@ export class OfficeStore {
   readonly dir: string
   private files = new Map<string, FileState>()
   private version = 0
-  private roster: Map<string, RosterEntry> = new Map()
-  private rosterVersion = -1
-  private rosterDay = -1
+  private roster = new IncrementalRoster(startOfLocalDay(Date.now()))
   private nameFor: NameResolver = createNameResolver([])
   private listeners = new Set<() => void>()
   private watcher: FSWatcher | null = null
@@ -223,6 +224,7 @@ export class OfficeStore {
     }
     for (const file of [...this.files.keys()]) {
       if (!seen.has(file)) {
+        this.dropFile(file)
         this.files.delete(file)
         changed = true
       }
@@ -230,24 +232,45 @@ export class OfficeStore {
     return changed
   }
 
+  /** Subtract everything a file contributed before its state is dropped or reparsed. */
+  private dropFile(file: string): void {
+    const fs = this.files.get(file)
+    if (!fs) return
+    for (const c of fs.state.contributions) this.roster.remove(c, file)
+  }
+
   private async readFile(file: string): Promise<boolean> {
     const info = await stat(file)
     const size = info.size
     const mtime = Number.isFinite(info.mtimeMs) ? info.mtimeMs : Date.now()
+    const dev = Number(info.dev)
+    const ino = Number(info.ino)
     let fs = this.files.get(file)
-    if (fs && fs.size === size) {
+
+    const identityChanged = !!fs && (fs.dev !== dev || fs.ino !== ino)
+    const sameSize = !!fs && fs.size === size
+
+    if (fs && !identityChanged && sameSize) {
       const moved = fs.mtime !== mtime
-      fs.mtime = mtime // touch only; status changes are time-based
-      return moved
-    }
-    // Any other append is a change even when the appended tail is still a partial line.
-    // Rewritten rather than appended to: start that file over.
-    if (!fs || size < fs.offset) {
-      fs = { offset: 0, size: 0, mtime, state: emptyState() }
+      if (!moved) return false
+      fs.mtime = mtime
+      // Same size but a new mtime means the bytes may have been overwritten in place; reparse from 0.
+      this.dropFile(file)
+      fs.state = emptyState()
+      fs.offset = 0
+      fs.dev = dev
+      fs.ino = ino
+    } else if (!fs || identityChanged || size < fs.size) {
+      // New file, atomic replace (new inode), or truncation (even when it lands inside a partial tail).
+      if (fs) this.dropFile(file)
+      fs = { offset: 0, size: 0, mtime, dev, ino, state: emptyState() }
       this.files.set(file, fs)
     }
+    // Any other append is a change even when the appended tail is still a partial line.
     fs.size = size
     fs.mtime = mtime
+    fs.dev = dev
+    fs.ino = ino
 
     let added = false
     let chunk = MAX_CHUNK_BYTES
@@ -273,7 +296,10 @@ export class OfficeStore {
         }
         chunk = MAX_CHUNK_BYTES
         const { events } = parseChunk(buf.toString('utf8', 0, end))
-        for (const ev of events) applyEvent(fs.state, ev)
+        for (const ev of events) {
+          const contribution = applyEvent(fs.state, ev)
+          if (contribution) this.roster.add(contribution, file)
+        }
         fs.offset += end
         if (events.length > 0) added = true
       }
@@ -302,20 +328,9 @@ export class OfficeStore {
     return out
   }
 
-  /** All contributions (dedupe happens in aggregateRoster). */
-  private allContributions(): Contribution[] {
-    const out: Contribution[] = []
-    for (const fs of this.files.values()) for (const c of fs.state.contributions) out.push(c)
-    return out
-  }
-
-  private rosterFor(dayStart: number): Map<string, RosterEntry> {
-    if (this.rosterVersion !== this.version || this.rosterDay !== dayStart) {
-      this.roster = aggregateRoster(this.allContributions(), dayStart)
-      this.rosterVersion = this.version
-      this.rosterDay = dayStart
-    }
-    return this.roster
+  private rosterFor(dayStart: number): Iterable<RosterEntry> {
+    this.roster.setDay(dayStart)
+    return this.roster.entries()
   }
 
   /** Current office snapshot. */
@@ -324,7 +339,7 @@ export class OfficeStore {
     return buildOfficeSnapshot({
       now,
       sessions: this.views(),
-      roster: this.rosterFor(dayStart).values(),
+      roster: this.rosterFor(dayStart),
       nameFor: this.nameFor,
     })
   }

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server/index.ts",
     "dev": "expo start --web",
-    "build": "expo export -p web",
+    "build": "EXPO_PUBLIC_OFFICE_MOCK= expo export -p web",
+    "build:mock": "EXPO_PUBLIC_OFFICE_MOCK=1 expo export -p web",
     "typecheck": "tsc --noEmit",
     "test:server": "node --test server/tests/*.test.ts",
     "check": "npm run typecheck && npm run test:server && npm run build"
