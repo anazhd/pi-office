@@ -230,6 +230,8 @@ export function step(
   const grace = new Map(prev.graceUntil)
   const plans = new Map<string, Plan>()
   const seen = new Set(prev.seen)
+  /** Idle desks whose grace has expired. Released only after a departure route succeeds. */
+  const expiringDesks = new Set<string>()
 
   const present = new Set(snapshot.characters.map((c) => c.id))
   const active = new Set(
@@ -256,8 +258,9 @@ export function step(
     if (expiry == null) {
       grace.set(id, now + DESK_GRACE_MS)
     } else if (now >= expiry) {
-      desks.delete(id)
-      grace.delete(id)
+      // Keep the reservation while the worker is still sitting there: if no departure
+      // route exists, the desk stays theirs instead of being handed to another worker.
+      expiringDesks.add(id)
     }
   }
 
@@ -287,7 +290,9 @@ export function step(
   let waitingCount = 0
   for (let index = 0; index < snapshot.characters.length; index++) {
     const char = snapshot.characters[index]
-    const deskIndex = desks.get(char.id) ?? null
+    const reservedDeskIndex = desks.get(char.id) ?? null
+    const departing = reservedDeskIndex != null && expiringDesks.has(char.id)
+    const deskIndex = departing ? null : reservedDeskIndex
     let seat: Seat
     if (deskIndex != null) seat = deskSeatFor(deskIndex)
     else if (char.status !== 'idle') seat = standingSeatFor(waitingCount++)
@@ -350,6 +355,11 @@ export function step(
           walkDuration = 0
         } else {
           path = route
+          // The desk reservation is only freed once we have a verified way out.
+          if (departing) {
+            desks.delete(char.id)
+            grace.delete(char.id)
+          }
           walkStart = now
           walkDuration = clamp(
             pathLength(path) * WALK_MS_PER_TILE,

@@ -377,7 +377,7 @@ function nearestReachableNode(from: Point, ignored: Box[]): number | null {
     const distance = Math.hypot(node.gx - from.gx, node.gy - from.gy)
     if (distance >= bestDistance) continue
     const blocked = OBSTACLES.some(
-      (box) => !ignored.includes(box) && segmentCrossesObstacle(from, node, box, 0),
+      (box) => !ignored.includes(box) && segmentCrossesObstacle(from, node, box, ROUTE_PAD),
     )
     if (blocked) continue
     best = i
@@ -471,9 +471,13 @@ const fixedSeatPoints: Point[] = [...LOUNGE_SEATS, ...DESK_SEATS, DOOR].map((sea
 /**
  * Beyond the two bounded overflow tiers, a large roster reuses a handful of spots with
  * deterministic small offsets. Every offset is re-validated with the same clearance as a
- * normal spot, so a crowd never lands in furniture or outside the room.
+ * normal spot, so a crowd never lands in furniture or outside the room. Characters are
+ * ~22px wide (~0.8 tile), so variants closer than CROWD_SEPARATION overlap visibly and
+ * are dropped instead of stacked. Once these separated spots are exhausted the seat
+ * functions cycle through them (reusing a spot), which is preferable to stacking.
  */
 const CROWD_OFFSET = 0.12
+const CROWD_SEPARATION = 0.3
 const CROWD_OFFSETS: Point[] = [
   { gx: 0, gy: 0 },
   { gx: CROWD_OFFSET, gy: 0 },
@@ -482,8 +486,9 @@ const CROWD_OFFSETS: Point[] = [
   { gx: 0, gy: -CROWD_OFFSET },
 ]
 
-function crowdVariants(points: Point[]): Point[] {
+function crowdVariants(points: Point[], avoid: Point[]): Point[] {
   const out: Point[] = []
+  const used = [...avoid]
   for (const point of points) {
     for (const offset of CROWD_OFFSETS) {
       const candidate = {
@@ -491,9 +496,11 @@ function crowdVariants(points: Point[]): Point[] {
         gy: Number((point.gy + offset.gy).toFixed(3)),
       }
       if (!insideRoom(candidate) || onDoorPath(candidate)) continue
+      if (used.some((other) => spotDistance(candidate, other) < CROWD_SEPARATION)) continue
       if (OBSTACLES.some((box) => pointInBox(candidate, box, SPOT_MARGIN))) continue
       if (nearestReachableNode(candidate, []) == null) continue
       out.push(candidate)
+      used.push(candidate)
     }
   }
   return out
@@ -503,6 +510,7 @@ const loungeCandidates = collectSpotCandidates({ x0: 8.2, x1: 13.6, y0: 2.0, y1:
 const loungeBasePoints = selectSpots(loungeCandidates, fixedSeatPoints, 0.8)
 const loungeCrowdPoints = crowdVariants(
   selectSpots(loungeCandidates, [...fixedSeatPoints, ...loungeBasePoints], 0.55, 8),
+  [...fixedSeatPoints, ...loungeBasePoints],
 )
 
 const standingCandidates = collectSpotCandidates({ x0: 0.9, x1: 6.6, y0: 8.0, y1: 9.45 })
@@ -518,6 +526,7 @@ const standingCrowdPoints = crowdVariants(
     0.4,
     8,
   ),
+  [...fixedSeatPoints, ...loungeBasePoints, ...standingBasePoints],
 )
 
 export const LOUNGE_OVERFLOW_SPOTS: Seat[] = loungeBasePoints.map((point, index) =>
@@ -533,13 +542,16 @@ export const STANDING_CROWD_SPOTS: Seat[] = standingCrowdPoints.map((point, inde
   overflowSeat(point, 'standing', 'sc', index, 'up'),
 )
 
-/** Unique overflow seats before the validated crowd fallback starts cycling. */
-export const MAX_LOUNGE_SPOTS = LOUNGE_OVERFLOW_SPOTS.length
-export const MAX_STANDING_SPOTS = STANDING_OVERFLOW_SPOTS.length
-/** Total seats including fixed lounge seats and both tiers of overflow spots. */
-export const LOUNGE_CAPACITY =
-  LOUNGE_SEATS.length + MAX_LOUNGE_SPOTS + LOUNGE_CROWD_SPOTS.length
-export const STANDING_CAPACITY = MAX_STANDING_SPOTS + STANDING_CROWD_SPOTS.length
+/** Separated overflow seats in each tier (every spot is >= CROWD_SEPARATION apart). */
+export const SEPARATED_LOUNGE_OVERFLOW_BASE = LOUNGE_OVERFLOW_SPOTS.length
+export const SEPARATED_STANDING_OVERFLOW_BASE = STANDING_OVERFLOW_SPOTS.length
+/** Real capacity: fixed lounge seats plus both separated overflow tiers. */
+export const SEPARATED_LOUNGE_CAPACITY =
+  LOUNGE_SEATS.length +
+  SEPARATED_LOUNGE_OVERFLOW_BASE +
+  LOUNGE_CROWD_SPOTS.length
+export const SEPARATED_STANDING_CAPACITY =
+  SEPARATED_STANDING_OVERFLOW_BASE + STANDING_CROWD_SPOTS.length
 
 type HeapEntry = { node: number; distance: number }
 
@@ -771,7 +783,7 @@ function simplify(points: Point[]): Point[] {
 /** A segment is clear when it does not touch any unignored footprint at routing clearance. */
 function routeSegmentClear(a: Point, b: Point, ignored: Box[]): boolean {
   const obstacles = ignored.length === 0 ? OBSTACLES : OBSTACLES.filter((box) => !ignored.includes(box))
-  return !segmentCrossesAny(a, b, obstacles, 0)
+  return !segmentCrossesAny(a, b, obstacles, LANE_ROUTE_PAD)
 }
 
 const MIN_ROUTE_LEG = 0.4
@@ -910,7 +922,9 @@ export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point
   const destPortal = portalForSeat(to)
   const startIgnored = fromSeat
     ? ownFrom
-    : OBSTACLES.filter((box) => pointInBox(from, box, 1e-6))
+    : // A mid-walk point may still be inside the padded margin of furniture it is
+      // standing up from or sitting down into; allow the connector to leave it.
+      OBSTACLES.filter((box) => pointInBox(from, box, LANE_ROUTE_PAD))
 
   const raw: Point[] = [{ gx: from.gx, gy: from.gy }]
   let anchor = 0
