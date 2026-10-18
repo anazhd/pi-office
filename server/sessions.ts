@@ -27,15 +27,56 @@ export const SWEEP_MS = 60_000
 const MAX_CHUNK_BYTES = 8 * 1024 * 1024
 const MAX_LINE_BYTES = 64 * 1024 * 1024
 
+/** The stat fields the scanner uses. */
+export type SessionFileStat = { size: number; mtimeMs: number; dev: number; ino: number }
+
+/** The read side of an open session file. */
+export type SessionFileHandle = {
+  read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ bytesRead: number }>
+  close(): Promise<void>
+}
+
+/**
+ * The only fs calls the scanner makes. Injectable so tests can simulate EACCES / EMFILE / EBUSY / a vanished
+ * file without permission tricks; the default is the real filesystem.
+ */
+export type SessionFileSystem = {
+  stat(path: string): Promise<SessionFileStat>
+  open(path: string): Promise<SessionFileHandle>
+}
+
+export const nodeSessionFileSystem: SessionFileSystem = {
+  stat: (path) => stat(path),
+  open: async (path) => {
+    const fh = await open(path, 'r')
+    return {
+      read: (buffer, offset, length, position) => fh.read(buffer, offset, length, position),
+      close: () => fh.close(),
+    }
+  },
+}
+
 export type FileState = {
-  /** Bytes already consumed (complete lines only). */
+  /**
+   * Bytes parsed into `state` (complete lines only). Advanced per parsed chunk together with `state` and the
+   * roster, so the two always agree, even when a later chunk of the same pass fails.
+   */
   offset: number
-  /** Size at the last scan (used to detect truncation even when it lands inside a partial tail). */
+  /**
+   * Metadata of the last pass that completed cleanly (size also detects truncation inside a partial tail).
+   * Only committed after a successful pass, never when a read fails, so a failure cannot make the file look
+   * already consumed.
+   */
   size: number
   mtime: number
   /** File identity; an atomic replace (new inode) restarts parsing from byte 0. */
   dev: number
   ino: number
+  /**
+   * The last pass failed (open/read/close). The next pass re-reads from `offset` even when the file's metadata
+   * is unchanged. After a reset, `offset` is 0 and `state` is empty, so the retry is a full reparse.
+   */
+  needsRetry: boolean
   state: SessionState
 }
 
@@ -99,6 +140,7 @@ export class OfficeStore {
   private version = 0
   private roster = new IncrementalRoster(startOfLocalDay(Date.now()))
   private nameFor: NameResolver = createNameResolver([])
+  private readonly fsys: SessionFileSystem
   private listeners = new Set<() => void>()
   private watcher: FSWatcher | null = null
   private debounce: ReturnType<typeof setTimeout> | null = null
@@ -108,8 +150,9 @@ export class OfficeStore {
   private again = false
   private ready: Promise<void> | null = null
 
-  constructor(dir: string) {
+  constructor(dir: string, fsys: SessionFileSystem = nodeSessionFileSystem) {
     this.dir = dir
+    this.fsys = fsys
   }
 
   /** Start watching and resolve after the first full scan. */
@@ -232,81 +275,107 @@ export class OfficeStore {
     return changed
   }
 
-  /** Subtract everything a file contributed before its state is dropped or reparsed. */
-  private dropFile(file: string): void {
-    const fs = this.files.get(file)
-    if (!fs) return
-    for (const c of fs.state.contributions) this.roster.remove(c, file)
+  /** Subtract everything a file contributed from the roster. Returns true when anything was removed. */
+  private dropFile(file: string): boolean {
+    const entry = this.files.get(file)
+    if (!entry) return false
+    for (const c of entry.state.contributions) this.roster.remove(c, file)
+    return entry.state.contributions.length > 0
   }
 
+  /**
+   * Start a file over from byte 0. Synchronous: contributions are subtracted and the state is emptied in one
+   * step, so an I/O failure afterwards leaves an empty state (retry = full reparse), never a half-subtracted one.
+   */
+  private resetFile(file: string, entry: FileState): boolean {
+    const removed = this.dropFile(file)
+    entry.state = emptyState()
+    entry.offset = 0
+    entry.needsRetry = true
+    return removed
+  }
+
+  /**
+   * Bring one file up to date. Returns true when the snapshot may have changed. Throws only if stat fails, which
+   * happens before any state is touched; open/read/close failures are recorded (needsRetry) and retried by the
+   * next pass whatever the file's metadata says.
+   */
   private async readFile(file: string): Promise<boolean> {
-    const info = await stat(file)
+    // Observed metadata: decides what to do, and is committed below only after a clean pass.
+    const info = await this.fsys.stat(file)
     const size = info.size
     const mtime = Number.isFinite(info.mtimeMs) ? info.mtimeMs : Date.now()
     const dev = Number(info.dev)
     const ino = Number(info.ino)
-    let fs = this.files.get(file)
 
-    const identityChanged = !!fs && (fs.dev !== dev || fs.ino !== ino)
-    const sameSize = !!fs && fs.size === size
-
-    if (fs && !identityChanged && sameSize) {
-      const moved = fs.mtime !== mtime
-      if (!moved) return false
-      fs.mtime = mtime
-      // Same size but a new mtime means the bytes may have been overwritten in place; reparse from 0.
-      this.dropFile(file)
-      fs.state = emptyState()
-      fs.offset = 0
-      fs.dev = dev
-      fs.ino = ino
-    } else if (!fs || identityChanged || size < fs.size) {
-      // New file, atomic replace (new inode), or truncation (even when it lands inside a partial tail).
-      if (fs) this.dropFile(file)
-      fs = { offset: 0, size: 0, mtime, dev, ino, state: emptyState() }
-      this.files.set(file, fs)
+    let changed = false
+    let entry = this.files.get(file)
+    if (!entry) {
+      entry = { offset: 0, size: 0, mtime: 0, dev, ino, needsRetry: true, state: emptyState() }
+      this.files.set(file, entry)
+    } else {
+      // Atomic replace (new inode), truncation (also inside a partial tail: offset may be past the size),
+      // or same size with a new mtime (bytes may have been overwritten in place): reparse from 0.
+      const replaced = entry.dev !== dev || entry.ino !== ino
+      const shrunk = size < Math.max(entry.size, entry.offset)
+      const rewritten = size === entry.size && mtime !== entry.mtime
+      if (replaced || shrunk || rewritten) {
+        changed = this.resetFile(file, entry)
+      } else if (!entry.needsRetry && size === entry.size && mtime === entry.mtime) {
+        return false
+      }
+      // Otherwise: a plain append (or a retry of a failed pass) resumes from the consumed offset.
     }
-    // Any other append is a change even when the appended tail is still a partial line.
-    fs.size = size
-    fs.mtime = mtime
-    fs.dev = dev
-    fs.ino = ino
 
     let added = false
     let chunk = MAX_CHUNK_BYTES
-    const fh = await open(file, 'r')
     try {
-      while (fs.offset < size) {
-        const length = Math.min(size - fs.offset, chunk)
-        const buf = Buffer.allocUnsafe(length)
-        const { bytesRead } = await fh.read(buf, 0, length, fs.offset)
-        if (bytesRead === 0) break
-        // Only consume complete lines; the tail may be a half-written line or half a multi-byte character.
-        const end = buf.lastIndexOf(10, bytesRead - 1) + 1
-        if (end === 0) {
-          if (fs.offset + bytesRead >= size) break // partial last line: wait for the rest
-          if (chunk >= MAX_LINE_BYTES) {
-            // Degenerate line with no newline: skip it instead of buffering it forever.
-            fs.offset += bytesRead
-            chunk = MAX_CHUNK_BYTES
+      const fh = await this.fsys.open(file)
+      try {
+        while (entry.offset < size) {
+          const length = Math.min(size - entry.offset, chunk)
+          const buf = Buffer.allocUnsafe(length)
+          const { bytesRead } = await fh.read(buf, 0, length, entry.offset)
+          if (bytesRead === 0) break
+          // Only consume complete lines; the tail may be a half-written line or half a multi-byte character.
+          const end = buf.lastIndexOf(10, bytesRead - 1) + 1
+          if (end === 0) {
+            if (entry.offset + bytesRead >= size) break // partial last line: wait for the rest
+            if (chunk >= MAX_LINE_BYTES) {
+              // Degenerate line with no newline: skip it instead of buffering it forever.
+              entry.offset += bytesRead
+              chunk = MAX_CHUNK_BYTES
+              continue
+            }
+            chunk *= 2 // a single line longer than the current chunk
             continue
           }
-          chunk *= 2 // a single line longer than the current chunk
-          continue
+          chunk = MAX_CHUNK_BYTES
+          const { events } = parseChunk(buf.toString('utf8', 0, end))
+          for (const ev of events) {
+            const contribution = applyEvent(entry.state, ev)
+            if (contribution) this.roster.add(contribution, file)
+          }
+          entry.offset += end
+          if (events.length > 0) added = true
         }
-        chunk = MAX_CHUNK_BYTES
-        const { events } = parseChunk(buf.toString('utf8', 0, end))
-        for (const ev of events) {
-          const contribution = applyEvent(fs.state, ev)
-          if (contribution) this.roster.add(contribution, file)
-        }
-        fs.offset += end
-        if (events.length > 0) added = true
+      } finally {
+        await fh.close()
       }
-    } finally {
-      await fh.close()
+    } catch {
+      // Keep what was parsed (state and offset agree). The next pass re-reads from here regardless of metadata.
+      entry.needsRetry = true
+      return changed || added
     }
-    return added || fs.offset < size
+
+    // Clean pass: commit the metadata observed before reading. Any append during the read shows up as a size
+    // change on the next pass. A partial tail counts as a change too, as before.
+    entry.size = size
+    entry.mtime = mtime
+    entry.dev = dev
+    entry.ino = ino
+    entry.needsRetry = false
+    return changed || added || entry.offset < size
   }
 
   /** Session views for the snapshot (only files that belong to a session and have a model). */
