@@ -13,7 +13,7 @@ import { extname, join, resolve, sep } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { OfficeStore, sessionsDir } from './sessions.ts'
-import { SseHub } from './sse.ts'
+import { SSE_HEADERS, SseHub } from './sse.ts'
 
 const HOST = process.env.HOST || '127.0.0.1'
 const PORT = Number(process.env.PORT ?? 6702) || 6702
@@ -66,7 +66,7 @@ const NOT_BUILT_HTML = `<!doctype html>
 
 // ---------------------------------------------------------------- SSE hub
 
-const hub = new SseHub()
+export const hub = new SseHub()
 
 // ---------------------------------------------------------------- static files
 
@@ -189,7 +189,7 @@ function sendJson(req: IncomingMessage, res: ServerResponse, status: number, val
   res.end(req.method === 'HEAD' ? undefined : body)
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+export async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const method = req.method ?? 'GET'
   const url = new URL(req.url ?? '/', 'http://localhost')
   const pathname = url.pathname
@@ -205,6 +205,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (pathname === '/api/health') return sendJson(req, res, 200, { ok: true })
     if (pathname === '/api/office') return sendJson(req, res, 200, store.snapshot())
     if (pathname === '/api/stream') {
+      // HEAD gets the stream headers and ends at once; subscribing would hold a slot open with no body.
+      if (method === 'HEAD') {
+        res.writeHead(200, SSE_HEADERS)
+        res.end()
+        return
+      }
       if (!hub.add(req, res, store.snapshot())) {
         res.writeHead(503, {
           'Content-Type': 'text/plain; charset=utf-8',

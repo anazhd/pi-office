@@ -51,6 +51,7 @@ function fakeRes(writeResult = true): any {
   res.writableLength = 0
   res.written = []
   res.ended = false
+  res.destroyed = false
   res.writeHead = () => {}
   res.write = (chunk: string) => {
     res.written.push(String(chunk))
@@ -58,6 +59,9 @@ function fakeRes(writeResult = true): any {
   }
   res.end = () => {
     res.ended = true
+  }
+  res.destroy = () => {
+    res.destroyed = true
   }
   return res
 }
@@ -98,7 +102,8 @@ test('sse: drops a client whose write buffer is over the cap', () => {
   res.writableLength = 11
   hub.broadcast(snapshot(1, 10))
   assert.equal(hub.size, 0)
-  assert.equal(res.ended, true)
+  assert.equal(res.destroyed, true)
+  assert.equal(res.ended, false)
 })
 
 test('sse: drops a client that never drains after a false write', async () => {
@@ -113,8 +118,38 @@ test('sse: drops a client that never drains after a false write', async () => {
 test('sse: request errors clean up the client', () => {
   const hub = new SseHub()
   const req = fakeReq()
-  hub.add(req, fakeRes(), snapshot(1))
+  const res = fakeRes()
+  hub.add(req, res, snapshot(1))
   assert.equal(hub.size, 1)
   req.emit('error', new Error('boom'))
   assert.equal(hub.size, 0)
+  assert.equal(res.destroyed, true)
+})
+
+test('sse: cleanup is idempotent across close, error and shutdown', () => {
+  const hub = new SseHub()
+  const req = fakeReq()
+  const res = fakeRes()
+  hub.add(req, res, snapshot(1))
+  let destroys = 0
+  res.destroy = () => {
+    destroys++
+    res.destroyed = true
+  }
+  res.emit('close')
+  req.emit('error', new Error('late'))
+  res.emit('error', new Error('late'))
+  hub.closeAll()
+  assert.equal(hub.size, 0)
+  assert.equal(destroys, 1)
+})
+
+test('sse: late response errors after eviction do not throw', () => {
+  const hub = new SseHub({ maxBufferedBytes: 10 })
+  const res = fakeRes()
+  hub.add(fakeReq(), res, snapshot(1))
+  res.writableLength = 11
+  hub.broadcast(snapshot(1, 10))
+  assert.equal(hub.size, 0)
+  assert.doesNotThrow(() => res.emit('error', new Error('write after destroy')))
 })
