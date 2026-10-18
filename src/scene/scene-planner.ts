@@ -35,6 +35,8 @@ export type PlannerState = {
   plans: Map<string, Plan>
   /** character id -> hot-desk index. */
   desks: Map<string, number>
+  /** character id -> sticky lounge-seat index, kept across desk trips. */
+  lounges: Map<string, number>
   /** character id -> local time at which its reserved desk may be released. */
   graceUntil: Map<string, number>
   /** Every character ever seen, so a returning character is not a "new hire". */
@@ -67,6 +69,7 @@ export function initialPlannerState(): PlannerState {
   return {
     plans: new Map(),
     desks: new Map(),
+    lounges: new Map(),
     graceUntil: new Map(),
     seen: new Set(),
     loaded: false,
@@ -177,6 +180,7 @@ export function step(
 
   const firstRender = !prev.loaded
   const desks = new Map(prev.desks)
+  const lounges = new Map(prev.lounges)
   const grace = new Map(prev.graceUntil)
   const plans = new Map<string, Plan>()
   const seen = new Set(prev.seen)
@@ -185,6 +189,10 @@ export function step(
   const active = new Set(
     snapshot.characters.filter((c) => c.status !== 'idle').map((c) => c.id),
   )
+
+  for (const id of [...lounges.keys()]) {
+    if (!present.has(id)) lounges.delete(id)
+  }
 
   for (const id of [...desks.keys()]) {
     if (!present.has(id)) {
@@ -219,6 +227,17 @@ export function step(
     }
   }
 
+  // Sticky lounge seats: only characters without one take the first free index, in
+  // roster order. A roster insertion therefore never shifts anyone else's seat.
+  const usedLounges = new Set(lounges.values())
+  for (const char of snapshot.characters) {
+    if (lounges.has(char.id)) continue
+    let index = 0
+    while (usedLounges.has(index)) index += 1
+    lounges.set(char.id, index)
+    usedLounges.add(index)
+  }
+
   let waitingCount = 0
   for (let index = 0; index < snapshot.characters.length; index++) {
     const char = snapshot.characters[index]
@@ -226,7 +245,7 @@ export function step(
     let seat: Seat
     if (deskIndex != null) seat = deskSeatFor(deskIndex)
     else if (char.status !== 'idle') seat = standingSeatFor(waitingCount++)
-    else seat = loungeSeatFor(index)
+    else seat = loungeSeatFor(lounges.get(char.id) ?? index)
 
     const previous = prev.plans.get(char.id)
     const isNew = previous ? previous.isNew : firstRender ? false : !prev.seen.has(char.id)
@@ -308,6 +327,7 @@ export function step(
     snapshot === prev.lastSnapshot &&
     plansEqual(prev.plans, plans) &&
     desksEqual(prev.desks, desks) &&
+    mapsEqual(prev.lounges, lounges) &&
     mapsEqual(prev.graceUntil, grace) &&
     setsEqual(prev.seen, seen)
   ) {
@@ -317,6 +337,7 @@ export function step(
   return {
     plans,
     desks,
+    lounges,
     graceUntil: grace,
     seen,
     loaded: true,

@@ -11,6 +11,7 @@ import {
 } from 'react-native-svg'
 import { iso, isoPoints, hashIndex, TILE_H, TILE_W } from './iso'
 import { DESK_BENCHES, DESK_SEATS, type Seat } from './layout'
+import { FURNITURE_FOOTPRINTS, deskChairBox, deskMonitorBox } from './footprints'
 import type { SceneItem } from './types'
 
 type BoxColors = { top: string; left: string; right: string }
@@ -92,7 +93,7 @@ function frontDepth(gx: number, gy: number, w: number, d: number): number {
   return gx + w + gy + d
 }
 
-const SOFA = { gx: 8.94, gy: 4.62, w: 1.0, d: 3.05 }
+const SOFA = FURNITURE_FOOTPRINTS.sofa
 const SOFA_SEGMENTS = 3
 
 export function buildFurniture(occupied: Set<number>, now: number): SceneItem[] {
@@ -114,14 +115,16 @@ export function buildFurniture(occupied: Set<number>, now: number): SceneItem[] 
   DESK_SEATS.forEach((seat, index) => {
     // The monitor, keyboard and desk clutter are one unit. Its front-most part is
     // the keyboard, which sits just behind the worker at this seat.
+    const monitorBox = deskMonitorBox(seat)
+    const chairBox = deskChairBox(seat)
     add(
       `monitor-${index}`,
-      frontDepth(seat.gx - 0.32, seat.gy - 0.38, 0.64, 0.2),
+      frontDepth(monitorBox.gx + 0.13, monitorBox.gy + 0.48, 0.64, 0.2),
       <Monitor seat={seat} occupied={occupied.has(index)} now={now} index={index} />,
     )
     add(
       `chair-${index}`,
-      frontDepth(seat.gx - 0.23, seat.gy + 0.16, 0.46, 0.09),
+      frontDepth(chairBox.gx + 0.07, chairBox.gy + 0.36, 0.46, 0.09),
       <DeskChair seat={seat} index={index} />,
     )
   })
@@ -152,30 +155,55 @@ export function buildFurniture(occupied: Set<number>, now: number): SceneItem[] 
     <SofaArm gy={SOFA.gy + 2.83} />,
   )
 
-  add('armchair-1', frontDepth(12.12, 5.0, 1.0, 0.86), <ArmchairBase gy={5.0} />)
-  add('armchair-1-back', frontDepth(13.0, 5.0, 0.12, 0.86), <ArmchairBack gy={5.0} />)
-  add('armchair-2', frontDepth(12.12, 6.74, 1.0, 0.86), <ArmchairBase gy={6.74} />)
-  add('armchair-2-back', frontDepth(13.0, 6.74, 0.12, 0.86), <ArmchairBack gy={6.74} />)
-  add('coffee-table', frontDepth(10.28, 5.58, 1.58, 1.05), <CoffeeTable now={now} />)
-  add('ottoman-1', frontDepth(10.62, 4.44, 0.84, 0.58), <Ottoman gy={4.44} />)
-  add('ottoman-2', frontDepth(10.62, 7.2, 0.84, 0.58), <Ottoman gy={7.2} />)
-  add('window-bench', frontDepth(7.72, 0.72, 1.92, 0.56), <WindowBench />)
-  add('beanbag-1', 9.38 + 8.45 + 0.4, <Beanbag gx={9.38} gy={8.45} color="#C98A4B" />)
-  add('beanbag-2', 10.45 + 8.48 + 0.4, <Beanbag gx={10.45} gy={8.48} color="#5C8D80" />)
-  add('beanbag-3', 11.52 + 8.45 + 0.4, <Beanbag gx={11.52} gy={8.45} color="#B4654A" />)
-  add('beanbag-4', 12.58 + 8.45 + 0.4, <Beanbag gx={12.58} gy={8.45} color="#6E5A79" />)
-  add('cushion-1', frontDepth(8.11, 6.57, 0.68, 0.56), <Cushion gx={8.45} gy={6.85} />)
-  add('cushion-2', frontDepth(9.64, 7.44, 0.68, 0.56), <Cushion gx={9.98} gy={7.72} />)
-  add('cushion-3', frontDepth(12.84, 7.62, 0.68, 0.56), <Cushion gx={13.18} gy={7.9} />)
-  add('coffee-counter', frontDepth(10.3, 0.42, 3.1, 0.9), <CoffeeCounter now={now} />)
-  add('bookshelf', frontDepth(0.26, 7.88, 0.62, 1.55), <Bookshelf />)
-  add('floor-lamp', 8.42 + 4.18 + 0.3, <FloorLamp now={now} />)
+  const northArm = FURNITURE_FOOTPRINTS.armchairNorth
+  const southArm = FURNITURE_FOOTPRINTS.armchairSouth
+  const coffeeTable = FURNITURE_FOOTPRINTS.coffeeTable
+  const northOttoman = FURNITURE_FOOTPRINTS.ottomanNorth
+  const southOttoman = FURNITURE_FOOTPRINTS.ottomanSouth
+  const windowBench = FURNITURE_FOOTPRINTS.windowBench
+  const coffeeCounter = FURNITURE_FOOTPRINTS.coffeeCounter
+  const bookshelf = FURNITURE_FOOTPRINTS.bookshelf
+  const sideTable = FURNITURE_FOOTPRINTS.sideTable
+  const lamp = FURNITURE_FOOTPRINTS.floorLamp
 
-  add('plant-lounge', 13.35 + 3.05 + 0.55, <Plant gx={13.35} gy={3.05} seed={1} scale={1.1} />)
-  add('plant-door', 7.78 + 9.22 + 0.45, <Plant gx={7.78} gy={9.22} seed={2} scale={0.9} />)
-  add('plant-shelf', 0.62 + 9.28 + 0.4, <Plant gx={0.62} gy={9.28} seed={3} scale={0.8} />)
-  add('plant-desk', 0.55 + 6.35 + 0.38, <Plant gx={0.55} gy={6.35} seed={4} scale={0.75} />)
-  add('side-table', frontDepth(8.34, 6.55, 0.62, 0.62), <SideTable />)
+  add('armchair-1', frontDepth(northArm.gx, northArm.gy, northArm.w, northArm.d), <ArmchairBase gy={northArm.gy} />)
+  add('armchair-1-back', frontDepth(northArm.gx + northArm.w - 0.12, northArm.gy, 0.12, northArm.d), <ArmchairBack gy={northArm.gy} />)
+  add('armchair-2', frontDepth(southArm.gx, southArm.gy, southArm.w, southArm.d), <ArmchairBase gy={southArm.gy} />)
+  add('armchair-2-back', frontDepth(southArm.gx + southArm.w - 0.12, southArm.gy, 0.12, southArm.d), <ArmchairBack gy={southArm.gy} />)
+  add('coffee-table', frontDepth(coffeeTable.gx, coffeeTable.gy, coffeeTable.w, coffeeTable.d), <CoffeeTable now={now} />)
+  add('ottoman-1', frontDepth(northOttoman.gx, northOttoman.gy, northOttoman.w, northOttoman.d), <Ottoman gy={northOttoman.gy} />)
+  add('ottoman-2', frontDepth(southOttoman.gx, southOttoman.gy, southOttoman.w, southOttoman.d), <Ottoman gy={southOttoman.gy} />)
+  add('window-bench', frontDepth(windowBench.gx, windowBench.gy, windowBench.w, windowBench.d), <WindowBench />)
+
+  const beanbagColors = ['#C98A4B', '#5C8D80', '#B4654A', '#6E5A79']
+  FURNITURE_FOOTPRINTS.beanbags.forEach((bag, i) => {
+    const gx = bag.gx + bag.w / 2
+    const gy = bag.gy + bag.d / 2
+    add(`beanbag-${i + 1}`, gx + gy + 0.4, <Beanbag gx={gx} gy={gy} color={beanbagColors[i]} />)
+  })
+
+  FURNITURE_FOOTPRINTS.cushions.forEach((cushion, i) => {
+    const gx = cushion.gx + cushion.w / 2
+    const gy = cushion.gy + cushion.d / 2
+    add(`cushion-${i + 1}`, frontDepth(cushion.gx, cushion.gy, cushion.w, cushion.d), <Cushion gx={gx} gy={gy} />)
+  })
+
+  add('coffee-counter', frontDepth(coffeeCounter.gx, coffeeCounter.gy, coffeeCounter.w, coffeeCounter.d), <CoffeeCounter now={now} />)
+  add('bookshelf', frontDepth(bookshelf.gx, bookshelf.gy, bookshelf.w, bookshelf.d), <Bookshelf />)
+  add('floor-lamp', lamp.gx + lamp.w / 2 + lamp.gy + lamp.d / 2 + 0.3, <FloorLamp now={now} />)
+
+  const plantSpecs = [
+    { box: FURNITURE_FOOTPRINTS.plants[0], seed: 1, scale: 1.1, key: 'lounge' },
+    { box: FURNITURE_FOOTPRINTS.plants[1], seed: 2, scale: 0.9, key: 'door' },
+    { box: FURNITURE_FOOTPRINTS.plants[2], seed: 3, scale: 0.8, key: 'shelf' },
+    { box: FURNITURE_FOOTPRINTS.plants[3], seed: 4, scale: 0.75, key: 'desk' },
+  ]
+  plantSpecs.forEach(({ box, seed, scale, key }) => {
+    const gx = box.gx + box.w / 2
+    const gy = box.gy + box.d / 2
+    add(`plant-${key}`, gx + gy + 0.5 * scale, <Plant gx={gx} gy={gy} seed={seed} scale={scale} />)
+  })
+  add('side-table', frontDepth(sideTable.gx, sideTable.gy, sideTable.w, sideTable.d), <SideTable />)
 
   return items
 }
@@ -237,8 +265,9 @@ function Monitor({
   now: number
   index: number
 }) {
-  const gy = seat.gy - 0.86
-  const gx = seat.gx - 0.45
+  const monitorBox = deskMonitorBox(seat)
+  const gy = monitorBox.gy
+  const gx = monitorBox.gx
   const frontGy = gy + 0.06
   const screenBottom = 48
   const screenTop = 68
@@ -642,17 +671,16 @@ function ArmchairBack({ gy }: { gy: number }) {
 }
 
 function CoffeeTable({ now }: { now: number }) {
-  const gx = 10.28
-  const gy = 5.58
+  const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.coffeeTable
   const x = iso(gx + 0.8, gy + 0.55, 22)
   return (
     <G>
       <Shadow gx={gx + 0.8} gy={gy + 0.55} rx={40} ry={18} />
-      <Box gx={gx} gy={gy} w={1.58} d={1.05} z0={18} h={4.5} colors={WOOD} stroke="#C08B5D" strokeOpacity={0.4} />
+      <Box gx={gx} gy={gy} w={w} d={d} z0={18} h={4.5} colors={WOOD} stroke="#C08B5D" strokeOpacity={0.4} />
       <Box gx={gx + 0.12} gy={gy + 0.12} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
-      <Box gx={gx + 1.36} gy={gy + 0.12} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
+      <Box gx={gx + w - 0.22} gy={gy + 0.12} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
       <Box gx={gx + 0.12} gy={gy + 0.83} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
-      <Box gx={gx + 1.36} gy={gy + 0.83} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
+      <Box gx={gx + w - 0.22} gy={gy + 0.83} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
       {/* books */}
       <Box gx={gx + 0.25} gy={gy + 0.25} w={0.42} d={0.28} z0={22.5} h={2.2} colors={{ top: '#B4553A', left: '#8D3E2A', right: '#713020' }} />
       <Box gx={gx + 0.3} gy={gy + 0.27} w={0.38} d={0.25} z0={24.7} h={2.1} colors={{ top: '#E9DEC9', left: '#C9BCA4', right: '#B1A48C' }} />
@@ -678,7 +706,7 @@ function CoffeeTable({ now }: { now: number }) {
 }
 
 function Ottoman({ gy }: { gy: number }) {
-  const gx = 10.62
+  const gx = FURNITURE_FOOTPRINTS.ottomanNorth.gx
   return (
     <G>
       <Shadow gx={gx + 0.42} gy={gy + 0.3} rx={24} ry={12} />
@@ -698,13 +726,12 @@ function Ottoman({ gy }: { gy: number }) {
 }
 
 function WindowBench() {
-  const gx = 7.72
-  const gy = 0.72
+  const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.windowBench
   return (
     <G>
       <Shadow gx={gx + 1.0} gy={gy + 0.5} rx={46} ry={18} />
-      <Box gx={gx} gy={gy} w={1.92} d={0.56} z0={0} h={14} colors={{ top: '#B79A6C', left: '#96794F', right: '#7C633F' }} />
-      <Box gx={gx + 0.04} gy={gy + 0.04} w={1.84} d={0.48} z0={14} h={5} colors={{ top: '#D8C29B', left: '#B9A27C', right: '#9C8662' }} />
+      <Box gx={gx} gy={gy} w={w} d={d} z0={0} h={14} colors={{ top: '#B79A6C', left: '#96794F', right: '#7C633F' }} />
+      <Box gx={gx + 0.04} gy={gy + 0.04} w={w - 0.08} d={d - 0.08} z0={14} h={5} colors={{ top: '#D8C29B', left: '#B9A27C', right: '#9C8662' }} />
       {[0, 1].map((i) => (
         <Box
           key={i}
@@ -764,14 +791,13 @@ function Cushion({ gx, gy }: { gx: number; gy: number }) {
 }
 
 function CoffeeCounter({ now }: { now: number }) {
-  const gx = 10.3
-  const gy = 0.42
+  const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.coffeeCounter
   const machineGlow = iso(12.55, 0.78, 58)
   return (
     <G>
       <Shadow gx={gx + 1.5} gy={gy + 0.5} rx={54} ry={16} />
-      <Box gx={gx} gy={gy} w={3.1} d={0.9} z0={0} h={32} colors={{ top: '#E8DDC9', left: '#7B5636', right: '#634428' }} />
-      <Box gx={gx} gy={gy} w={3.1} d={0.9} z0={32} h={4} colors={CREAM} stroke="#F4EDE0" strokeOpacity={0.5} />
+      <Box gx={gx} gy={gy} w={w} d={d} z0={0} h={32} colors={{ top: '#E8DDC9', left: '#7B5636', right: '#634428' }} />
+      <Box gx={gx} gy={gy} w={w} d={d} z0={32} h={4} colors={CREAM} stroke="#F4EDE0" strokeOpacity={0.5} />
       {[0, 1, 2].map((i) => (
         <Rect
           key={i}
@@ -849,13 +875,12 @@ function CoffeeCounter({ now }: { now: number }) {
 }
 
 function Bookshelf() {
-  const gx = 0.26
-  const gy = 7.88
+  const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.bookshelf
   const books = ['#B4553A', '#5C8D80', '#D3A85F', '#6E5A79', '#8DA37E', '#C9B08B', '#4D6BFE']
   return (
     <G>
       <Shadow gx={gx + 0.4} gy={gy + 0.9} rx={36} ry={16} />
-      <Box gx={gx} gy={gy} w={0.62} d={1.55} z0={0} h={92} colors={{ top: '#5A3D28', left: '#4A3120', right: '#3B2618' }} />
+      <Box gx={gx} gy={gy} w={w} d={d} z0={0} h={92} colors={{ top: '#5A3D28', left: '#4A3120', right: '#3B2618' }} />
       <Box gx={gx + 0.58} gy={gy + 0.03} w={0.05} d={1.49} z0={4} h={84} colors={{ top: '#6B4A31', left: '#553824', right: '#442C1C' }} />
       {[0, 1, 2, 3].map((shelf) => {
         const z = 17 + shelf * 19
@@ -895,7 +920,8 @@ function Bookshelf() {
 }
 
 function FloorLamp({ now }: { now: number }) {
-  const base = iso(8.42, 4.18)
+  const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.floorLamp
+  const base = iso(gx + w / 2, gy + d / 2)
   const shadeY = base.y - 92
   return (
     <G>
@@ -973,16 +999,15 @@ function Plant({
 }
 
 function SideTable() {
-  const gx = 8.34
-  const gy = 6.55
+  const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.sideTable
   return (
     <G>
       <Shadow gx={gx + 0.3} gy={gy + 0.3} rx={18} ry={9} />
-      <Box gx={gx} gy={gy} w={0.62} d={0.62} z0={17} h={3.5} colors={WOOD} />
+      <Box gx={gx} gy={gy} w={w} d={d} z0={17} h={3.5} colors={WOOD} />
       <Box gx={gx + 0.08} gy={gy + 0.08} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
-      <Box gx={gx + 0.47} gy={gy + 0.08} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
-      <Box gx={gx + 0.08} gy={gy + 0.47} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
-      <Box gx={gx + 0.47} gy={gy + 0.47} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
+      <Box gx={gx + w - 0.15} gy={gy + 0.08} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
+      <Box gx={gx + 0.08} gy={gy + d - 0.15} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
+      <Box gx={gx + w - 0.15} gy={gy + d - 0.15} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
       <Ellipse cx={iso(gx + 0.31, gy + 0.31, 24).x} cy={iso(gx + 0.31, gy + 0.31, 24).y} rx={6} ry={2.6} fill="#D9C9AF" />
       <Rect x={iso(gx + 0.31, gy + 0.31, 24).x - 6} y={iso(gx + 0.31, gy + 0.31, 24).y} width={12} height={3.5} rx={1.6} fill="#C9B08B" />
       <SvgText
