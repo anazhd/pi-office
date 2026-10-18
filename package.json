@@ -10,7 +10,8 @@
     "build:mock": "EXPO_PUBLIC_OFFICE_MOCK=1 expo export -p web",
     "typecheck": "tsc --noEmit",
     "test:server": "node --test server/tests/*.test.ts",
-    "check": "npm run typecheck && npm run test:server && npm run build"
+    "test:scene": "node --test src/scene/tests/*.test.ts",
+    "check": "npm run typecheck && npm run test:server && npm run test:scene && npm run build"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",

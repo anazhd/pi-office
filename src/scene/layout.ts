@@ -1,4 +1,4 @@
-import type { Point } from './iso'
+import type { Point } from './iso.ts'
 
 export type SeatKind =
   | 'desk'
@@ -22,6 +22,8 @@ export type Seat = {
 }
 
 export const CORRIDOR_Y = 5.55
+/** Safe horizontal lane between the two hot-desk benches. */
+export const ROW1_LANE_Y = 2.72
 export const WEST_AISLE_X = 0.52
 export const EAST_AISLE_X = 7.48
 /** Walkway column from the entrance up to the corridor. Overflow traffic shares it. */
@@ -130,8 +132,8 @@ type PathOptions = {
 function exitFrom(gx: number, gy: number, kind: SeatKind | 'door', row?: 1 | 2 | 3): Point[] {
   if (kind === 'desk' && row === 1) {
     return [
-      { gx, gy: 2.72 },
-      { gx: WEST_AISLE_X, gy: 2.72 },
+      { gx, gy: ROW1_LANE_Y },
+      { gx: WEST_AISLE_X, gy: ROW1_LANE_Y },
       { gx: WEST_AISLE_X, gy: CORRIDOR_Y },
     ]
   }
@@ -157,8 +159,8 @@ function entryTo(gx: number, gy: number, kind: SeatKind, row?: 1 | 2 | 3): Point
   if (kind === 'desk' && row === 1) {
     return [
       { gx: WEST_AISLE_X, gy: CORRIDOR_Y },
-      { gx: WEST_AISLE_X, gy: 2.72 },
-      { gx, gy: 2.72 },
+      { gx: WEST_AISLE_X, gy: ROW1_LANE_Y },
+      { gx, gy: ROW1_LANE_Y },
       { gx, gy },
     ]
   }
@@ -278,4 +280,209 @@ export const WINDOWS = {
     { gx: 4.6, gy: 0, w: 2.7, d: 0.02 },
     { gx: 10.9, gy: 0, w: 2.7, d: 0.02 },
   ],
+}
+
+export type Box = { gx: number; gy: number; w: number; d: number }
+
+/** Large lounge furniture that routes should not cut through. */
+export const LOUNGE_OBSTACLES: Box[] = [
+  { gx: 9.1, gy: 4.75, w: 0.9, d: 2.85 }, // sofa row
+  { gx: 12.2, gy: 5.0, w: 0.8, d: 0.75 }, // north armchair
+  { gx: 12.2, gy: 6.75, w: 0.8, d: 0.75 }, // south armchair
+  { gx: 9.0, gy: 8.1, w: 3.9, d: 0.7 }, // beanbag row
+  { gx: 10.65, gy: 4.35, w: 0.7, d: 0.75 }, // north ottoman
+  { gx: 10.65, gy: 7.1, w: 0.7, d: 0.75 }, // south ottoman
+  { gx: 7.8, gy: 0.6, w: 2.2, d: 0.75 }, // window bench
+]
+
+export const OBSTACLES: Box[] = [...DESK_BENCHES, ...LOUNGE_OBSTACLES]
+
+/** True when the straight segment a→b touches the axis-aligned box (endpoints included). */
+export function segmentCrossesObstacle(a: Point, b: Point, box: Box, pad = 0): boolean {
+  const minX = box.gx - pad
+  const maxX = box.gx + box.w + pad
+  const minY = box.gy - pad
+  const maxY = box.gy + box.d + pad
+  const dx = b.gx - a.gx
+  const dy = b.gy - a.gy
+  let t0 = 0
+  let t1 = 1
+
+  const clip = (p: number, q: number): boolean => {
+    if (Math.abs(p) < 1e-9) return q >= 0
+    const r = q / p
+    if (p < 0) {
+      if (r > t1) return false
+      if (r > t0) t0 = r
+    } else {
+      if (r < t0) return false
+      if (r < t1) t1 = r
+    }
+    return true
+  }
+
+  return (
+    clip(-dx, a.gx - minX) &&
+    clip(dx, maxX - a.gx) &&
+    clip(-dy, a.gy - minY) &&
+    clip(dy, maxY - a.gy) &&
+    t0 <= t1
+  )
+}
+
+export function pathCrossesObstacle(points: Point[], obstacles: Box[] = OBSTACLES): boolean {
+  for (let i = 1; i < points.length; i++) {
+    for (const box of obstacles) {
+      if (segmentCrossesObstacle(points[i - 1], points[i], box)) return true
+    }
+  }
+  return false
+}
+
+const LANE_EPS = 0.08
+const near = (a: number, b: number) => Math.abs(a - b) < LANE_EPS
+
+function isNetworkPoint(p: Point): boolean {
+  return (
+    near(p.gy, CORRIDOR_Y) ||
+    near(p.gy, ROW1_LANE_Y) ||
+    near(p.gy, OVERFLOW_LANE_Y) ||
+    near(p.gy, STANDING_LANE_Y) ||
+    near(p.gx, WEST_AISLE_X) ||
+    near(p.gx, EAST_AISLE_X) ||
+    near(p.gx, ENTRY_LANE_X)
+  )
+}
+
+function pointInBox(p: Point, box: Box, pad = 0): boolean {
+  return (
+    p.gx >= box.gx - pad &&
+    p.gx <= box.gx + box.w + pad &&
+    p.gy >= box.gy - pad &&
+    p.gy <= box.gy + box.d + pad
+  )
+}
+
+/**
+ * Route from a point already on the aisle/corridor network to a seat, using the normal
+ * entry rules. Every leg stays on the safe lanes: row-1 lane, west aisle, corridor,
+ * overflow lane, standing lane, or the entry column.
+ */
+export function routeFromNetwork(
+  from: Point,
+  to: Point,
+  toKind: SeatKind,
+  toRow?: 1 | 2 | 3,
+): Point[] {
+  const points: Point[] = [{ gx: from.gx, gy: from.gy }]
+  let cursor = points[0]
+  const push = (gx: number, gy: number) => {
+    if (Math.abs(cursor.gx - gx) < 0.02 && Math.abs(cursor.gy - gy) < 0.02) return
+    cursor = { gx, gy }
+    points.push(cursor)
+  }
+
+  const enters = entryTo(to.gx, to.gy, toKind, toRow)
+  const target = enters[0]
+
+  const onVerticalLane =
+    near(from.gx, WEST_AISLE_X) || near(from.gx, ENTRY_LANE_X) || near(from.gx, EAST_AISLE_X)
+
+  if (!onVerticalLane && !near(from.gy, CORRIDOR_Y)) {
+    if (near(from.gy, OVERFLOW_LANE_Y) || near(from.gy, STANDING_LANE_Y)) {
+      push(ENTRY_LANE_X, from.gy)
+    } else if (near(from.gy, ROW1_LANE_Y)) {
+      push(WEST_AISLE_X, from.gy)
+    } else {
+      push(from.gx, CORRIDOR_Y)
+    }
+  }
+
+  if (!near(cursor.gy, CORRIDOR_Y)) push(cursor.gx, CORRIDOR_Y)
+  push(target.gx, CORRIDOR_Y)
+  for (const p of enters.slice(1)) push(p.gx, p.gy)
+  push(to.gx, to.gy)
+  return points
+}
+
+/**
+ * Build a safe route when a mid-walk character is retargeted. Instead of applying the old
+ * destination's exit rule from an arbitrary point (which can cut through a bench), follow
+ * the remaining path (or reverse the already-walked part) to the nearest network junction,
+ * then route from there using the normal entry rules.
+ */
+export function buildRetargetPath(
+  path: Point[],
+  current: Point,
+  walkedTiles: number,
+  to: Point,
+  opts: { toKind: SeatKind; toRow?: 1 | 2 | 3 },
+): Point[] {
+  if (path.length < 2) {
+    return routeFromNetwork(current, to, opts.toKind, opts.toRow)
+  }
+
+  const distances = [0]
+  for (let i = 1; i < path.length; i++) {
+    distances.push(
+      distances[i - 1] +
+        Math.hypot(path[i].gx - path[i - 1].gx, path[i].gy - path[i - 1].gy),
+    )
+  }
+  const total = distances[distances.length - 1]
+  const walked = Math.max(0, Math.min(total, walkedTiles))
+
+  let segment = 1
+  while (segment < path.length - 1 && walked > distances[segment]) segment += 1
+
+  const ignore = OBSTACLES.filter((box) => !pointInBox(current, box, 0.05))
+  let best: Point[] | null = null
+  let bestLength = Infinity
+
+  const consider = (prefix: Point[], junction: Point) => {
+    const suffix = routeFromNetwork(junction, to, opts.toKind, opts.toRow)
+    const candidate: Point[] = []
+    let cursor: Point | null = null
+    const push = (p: Point) => {
+      if (
+        cursor &&
+        Math.abs(cursor.gx - p.gx) < 0.02 &&
+        Math.abs(cursor.gy - p.gy) < 0.02
+      ) {
+        return
+      }
+      cursor = p
+      candidate.push(p)
+    }
+    for (const p of prefix) push(p)
+    for (const p of suffix) push(p)
+    if (pathCrossesObstacle(candidate, ignore)) return
+    const length = pathLength(candidate)
+    if (length < bestLength) {
+      best = candidate
+      bestLength = length
+    }
+  }
+
+  // Forward: continue along the unwalked part of the path to a junction.
+  for (let j = segment; j < path.length; j++) {
+    if (!isNetworkPoint(path[j])) continue
+    const prefix: Point[] = [{ gx: current.gx, gy: current.gy }]
+    for (let k = segment; k <= j; k++) prefix.push(path[k])
+    consider(prefix, path[j])
+  }
+
+  // Reverse: retrace the already-walked part back to a junction.
+  for (let j = segment - 1; j >= 0; j--) {
+    if (!isNetworkPoint(path[j])) continue
+    const prefix: Point[] = [{ gx: current.gx, gy: current.gy }]
+    for (let k = segment - 1; k >= j; k--) prefix.push(path[k])
+    consider(prefix, path[j])
+  }
+
+  if (best) return best
+
+  // No clean candidate (e.g. starting inside lounge furniture): fall back to the nearest
+  // corridor point, which is always safe once we are out of the furniture.
+  return routeFromNetwork({ gx: current.gx, gy: CORRIDOR_Y }, to, opts.toKind, opts.toRow)
 }

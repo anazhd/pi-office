@@ -247,7 +247,7 @@ let phaseTicks = 0
  * (now at a human pace) and the desk grace window are actually visible; the all-idle phase is
  * held longest so idle workers give up their desks and stroll back to the lounge.
  */
-const PHASE_TICKS = [8, 3, 3, 3, 3, 3]
+const PHASE_TICKS = [6, 3, 3, 3, 3, 3]
 
 export function nextMockSnapshot(): OfficeSnapshot {
   const now = Date.now()

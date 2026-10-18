@@ -9,7 +9,7 @@ import { useFonts } from 'expo-font'
 import { Stack } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { StatusBar } from 'expo-status-bar'
-import { useEffect } from 'react'
+import { StrictMode, useEffect } from 'react'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 SplashScreen.preventAutoHideAsync().catch(() => {})
@@ -32,14 +32,16 @@ export default function RootLayout() {
   if (!loaded && !fontError) return null
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: '#0C0A08' },
-        }}
-      />
-    </SafeAreaProvider>
+    <StrictMode>
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: '#0C0A08' },
+          }}
+        />
+      </SafeAreaProvider>
+    </StrictMode>
   )
 }
