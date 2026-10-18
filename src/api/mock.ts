@@ -239,12 +239,25 @@ const PHASES: Array<Record<string, ActiveSession[]>> = [
   },
 ]
 
-let phase = 0
+let phase = 1
+let phaseTicks = 0
+
+/**
+ * The app polls the fixture every ~4.2 s. Hold each phase for a few polls so the long walks
+ * (now at a human pace) and the desk grace window are actually visible; the all-idle phase is
+ * held longest so idle workers give up their desks and stroll back to the lounge.
+ */
+const PHASE_TICKS = [8, 3, 3, 3, 3, 3]
 
 export function nextMockSnapshot(): OfficeSnapshot {
   const now = Date.now()
   const actives = PHASES[phase % PHASES.length]
-  phase = (phase + 1) % PHASES.length
+  const hold = PHASE_TICKS[phase % PHASE_TICKS.length] ?? 3
+  phaseTicks += 1
+  if (phaseTicks >= hold) {
+    phaseTicks = 0
+    phase = (phase + 1) % PHASES.length
+  }
 
   const characters: Character[] = ROSTER.map((meta, index) => {
     const id = `${meta.provider}/${meta.model}`

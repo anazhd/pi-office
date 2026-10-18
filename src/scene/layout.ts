@@ -242,6 +242,25 @@ export function pointAlong(points: Point[], t: number): Point {
   return points[points.length - 1]
 }
 
+/** Unit direction of the path segment at distance fraction `t` (0..1). */
+export function directionAlong(points: Point[], t: number): Point {
+  if (points.length < 2) return { gx: 0, gy: 1 }
+  const clamped = Math.max(0, Math.min(1, t))
+  const total = pathLength(points)
+  let remaining = clamped * total
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]
+    const b = points[i]
+    const len = Math.hypot(b.gx - a.gx, b.gy - a.gy)
+    if (remaining <= len || i === points.length - 1) {
+      if (len <= 0) return { gx: 0, gy: 1 }
+      return { gx: (b.gx - a.gx) / len, gy: (b.gy - a.gy) / len }
+    }
+    remaining -= len
+  }
+  return { gx: 0, gy: 1 }
+}
+
 export const DESK_BENCHES = [
   { gx: 0.8, gy: 1.14, w: 6.2, d: 0.7 },
   { gx: 0.8, gy: 3.3, w: 6.2, d: 0.7 },

@@ -1,8 +1,9 @@
 import { Circle, Ellipse, G, Line, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg'
 import type { Seat, SeatKind } from './layout'
-import type { SceneCharacter } from './use-scene-model'
+import type { Heading, SceneCharacter } from './use-scene-model'
 import { hashIndex, iso } from './iso'
-import { lookFor, type Look } from './palette'
+import { lookFor, shade, type Look } from './palette'
+import { CHAIR_BACK_LOCAL, CHAIR_SEAT_LOCAL, chairFabric } from './furniture'
 
 type Props = {
   scene: SceneCharacter
@@ -25,13 +26,19 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
   const walking = pose === 'walking'
   const waiting = pose === 'waiting'
   const typing = pose === 'typing'
+  const relaxing = pose === 'relaxing'
   const bob = walking || waiting ? 0 : Math.sin(phase * 1.5 + offset) * 1
-  const stride = Math.sin(phase * 9 + offset)
+  // Step cadence follows the distance actually covered along the path, so the feet
+  // plant at walking speed instead of skating under a fixed clock.
+  const stridePhase = scene.strideTiles * 4.4
+  const stride = walking ? Math.sin(stridePhase) : 0
+  const bounce = walking ? Math.abs(Math.sin(stridePhase)) * 1.8 : 0
   const typeBeat = Math.sin(phase * 7.5 + offset) * 1.2
+  const chair = chairFabric(scene.deskIndex ?? 0)
 
   const sipPeriod = 7 + (hashIndex(char.id, 12, 55) / 10)
   const sipPhase = ((phase + offset) % sipPeriod)
-  const sip = !walking && !typing && sipPhase < 1.3 ? Math.sin((sipPhase / 1.3) * Math.PI) : 0
+  const sip = !walking && !typing && !relaxing && sipPhase < 1.3 ? Math.sin((sipPhase / 1.3) * Math.PI) : 0
 
   const steamT = (phase * 0.45 + offset * 0.1) % 1
   const mugX = typing ? 0 : 12
@@ -63,7 +70,9 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
         {walking || waiting ? (
           <WalkingBody
             look={look}
-            stride={walking ? stride : 0}
+            stride={stride}
+            bounce={bounce}
+            heading={scene.heading}
             phase={phase}
             still={waiting}
           />
@@ -71,6 +80,8 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
           <SeatedBody
             look={look}
             typing={typing}
+            relaxing={relaxing}
+            chair={chair}
             low={seatedLow}
             seatedOnWindow={scene.seat.kind === 'window'}
             bob={bob}
@@ -91,10 +102,8 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
         <Confetti x={x} y={y} now={now} enteredAt={scene.enteredAt} seed={char.id} />
       ) : null}
 
-      {typing ? (
-        <G>
-          <Ellipse cx={x - 12} cy={y - 22} rx={22} ry={18} fill="#8FE3D0" opacity={0.04} />
-        </G>
+      {typing || relaxing ? (
+        <Ellipse cx={x + 12} cy={y - 50} rx={25} ry={20} fill="#8FE3D0" opacity={0.055} />
       ) : null}
     </G>
   )
@@ -204,19 +213,24 @@ function NameTag({
 function WalkingBody({
   look,
   stride,
+  bounce,
+  heading,
   phase,
   still = false,
 }: {
   look: Look
   stride: number
+  bounce: number
+  heading: Heading
   phase: number
   still?: boolean
 }) {
-  const bounce = still ? 0 : Math.abs(Math.sin(phase * 9)) * 1.8
+  const back = heading === 'back-left' || heading === 'back-right'
+  const mirror = heading === 'front-left' || heading === 'back-left'
   const legA = stride * 20
   const legB = -stride * 20
   return (
-    <G transform={`translate(0 ${-bounce})`}>
+    <G transform={`translate(0 ${-bounce})${mirror ? ' scale(-1 1)' : ''}`}>
       <G transform={`rotate(${legA} -6 -16)`}>
         <Rect x={-9} y={-18} width={6} height={18} rx={3} fill={look.pants} />
         <Rect x={-10.5} y={-3} width={9} height={4} rx={2} fill="#2E2924" />
@@ -229,12 +243,31 @@ function WalkingBody({
       <Arm look={look} x={-11} y={-37} swing={stride * 16} />
       <Arm look={look} x={11} y={-37} swing={-stride * 16} />
 
-      <Rect x={-11} y={-41} width={22} height={25} rx={8} fill={look.shirt} />
-      <Path d="M -10 -39 L 0 -33 L 10 -39" stroke={look.shirtDark} strokeWidth={2} fill="none" />
-      <Rect x={-5.5} y={-37.5} width={11} height={8} rx={2} fill="#F4EDE0" opacity={0.9} />
-      <Rect x={-3.5} y={-35.4} width={7} height={1.4} rx={0.7} fill={look.shirtDark} opacity={0.6} />
-
-      <Head look={look} typing={false} sip={0} phase={phase} />
+      {back ? (
+        <G>
+          <Rect x={-11} y={-41} width={22} height={25} rx={8} fill={look.shirtBack} />
+          <Path
+            d="M -7 -37 Q 0 -32 7 -37"
+            stroke={look.shirtDark}
+            strokeWidth={1.4}
+            fill="none"
+            opacity={0.7}
+          />
+          <Rect x={-2} y={-41} width={4} height={7} rx={1.4} fill={look.shirtDark} opacity={0.5} />
+          <BackHead look={look} cy={-48} phase={phase} />
+        </G>
+      ) : (
+        <G>
+          <Rect x={-11} y={-41} width={22} height={25} rx={8} fill={look.shirt} />
+          <Path d="M -10 -39 L 0 -33 L 10 -39" stroke={look.shirtDark} strokeWidth={2} fill="none" />
+          <Rect x={-5.5} y={-37.5} width={11} height={8} rx={2} fill="#F4EDE0" opacity={0.9} />
+          <Rect x={-3.5} y={-35.4} width={7} height={1.4} rx={0.7} fill={look.shirtDark} opacity={0.6} />
+          {/* head leads the walk: mirrored variants make the left/right headings read differently */}
+          <G transform="translate(1.6 0)">
+            <Head look={look} typing={false} sip={0} phase={phase} />
+          </G>
+        </G>
+      )}
     </G>
   )
 }
@@ -251,6 +284,8 @@ function Arm({ look, x, y, swing }: { look: Look; x: number; y: number; swing: n
 function SeatedBody({
   look,
   typing,
+  relaxing,
+  chair,
   low,
   seatedOnWindow,
   bob,
@@ -276,30 +311,25 @@ function SeatedBody({
   phase: number
   offset: number
   prop: number
+  relaxing: boolean
+  chair: { top: string; left: string; right: string }
 }) {
   const drop = low ? 7 : 0
   const torsoTop = low ? -33 : -39
   const headY = (low ? -41 : -48) + bob
   const shirtH = low ? 20 : 24
 
-  if (typing) {
+  if (typing || relaxing) {
     return (
-      <G>
-        <ChairBack look={look} />
-        <G transform={`translate(0 ${bob})`}>
-          <Rect x={-10} y={-18} width={7} height={17} rx={3.5} fill={look.pants} />
-          <Rect x={3} y={-18} width={7} height={17} rx={3.5} fill={look.pants} />
-          <Rect x={-11} y={-41} width={22} height={25} rx={8} fill={look.shirt} />
-          <Path d="M -9 -39 Q 0 -32 9 -39" stroke={look.shirtDark} strokeWidth={2} fill="none" />
-          <G transform={`translate(0 ${typeBeat})`}>
-            <Rect x={-13} y={-22} width={5} height={12} rx={2.5} fill={look.shirtDark} />
-            <Rect x={8} y={-22} width={5} height={12} rx={2.5} fill={look.shirtDark} />
-            <Circle cx={-10.5} cy={-9} r={3} fill={look.skin} />
-            <Circle cx={10.5} cy={-9} r={3} fill={look.skin} />
-          </G>
-          <Head look={look} typing phase={phase} sip={0} />
-        </G>
-      </G>
+      <DeskBody
+        look={look}
+        chair={chair}
+        relaxing={relaxing}
+        bob={bob}
+        typeBeat={typeBeat}
+        phase={phase}
+        offset={offset}
+      />
     )
   }
 
@@ -404,13 +434,263 @@ function SeatedBody({
   )
 }
 
-function ChairBack({ look }: { look: Look }) {
+
+/** A slow, occasional lean-back when a worker is idling at its desk. */
+function leanBack(phase: number, offset: number): number {
+  return Math.max(0, Math.sin(phase * 0.42 + offset * 1.3)) ** 6
+}
+
+/**
+ * Desk work seen from behind: all desks face their monitors (`facing: 'up'`), so the worker is
+ * between us and the screen. Back of the head, back of the shirt, arms reaching forward to the
+ * keyboard, and the chair back laid over the lower back on the viewer side.
+ */
+function DeskBody({
+  look,
+  chair,
+  relaxing,
+  bob,
+  typeBeat,
+  phase,
+  offset,
+}: {
+  look: Look
+  chair: { top: string; left: string; right: string }
+  relaxing: boolean
+  bob: number
+  typeBeat: number
+  phase: number
+  offset: number
+}) {
+  // Screen-facing nod while typing; slow look-around and an occasional lean-back on a break.
+  const nod = relaxing
+    ? Math.sin(phase * 0.55 + offset) * 1.6 - leanBack(phase, offset) * 2.4
+    : Math.sin(phase * 1.7 + offset) * 1.1
+  const turn = relaxing ? Math.sin(phase * 0.33 + offset * 0.7) * 6 : Math.sin(phase * 0.7 + offset) * 1.8
+  const lean = relaxing ? leanBack(phase, offset) : 0
+  const handBob = relaxing ? 0 : typeBeat * 0.9
   return (
-    <G>
-      <Rect x={-13} y={-36} width={26} height={22} rx={5} fill={look.shirtDark} opacity={0.55} />
-      <Rect x={-11} y={-34} width={22} height={18} rx={4} fill="#40382F" />
+    <G transform={`translate(0 ${bob - lean * 0.9})`}>
+      {/* back of the shirt: shoulders slightly rounded, no collar or lanyard */}
+      <Path
+        d="M -11 -33 Q -11.5 -41 0 -41.4 Q 11.5 -41 11 -33 L 11 -20 Q 0 -17 -11 -20 Z"
+        fill={look.shirtBack}
+      />
+      <Path d="M -7.5 -36.5 Q 0 -32.5 7.5 -36.5" stroke={look.shirtDark} strokeWidth={1.3} fill="none" opacity={0.55} />
+      <Rect x={-2.2} y={-41} width={4.4} height={7} rx={1.6} fill={look.shirtDark} opacity={0.45} />
+
+      {/* arms reach forward to the keyboard: elbows out at the sides, forearms hidden by the body */}
+      <G stroke={look.shirtBack} strokeWidth={5} strokeLinecap="round" fill="none">
+        <Path d="M -8.4 -38 L -12.8 -29.6 L -10.2 -34.6" />
+        <Path d="M 8.4 -38 L 13.2 -29.6 L 11.4 -35.4" />
+      </G>
+      <G stroke={look.shirtDark} strokeWidth={1} strokeLinecap="round" fill="none" opacity={0.4}>
+        <Path d="M -9.4 -36.6 L -12.4 -30" />
+        <Path d="M 9.4 -36.6 L 12.7 -30.2" />
+      </G>
+      {/* the visible hand on the keyboard, bobbing with the keystrokes */}
+      <G transform={`translate(0 ${handBob})`}>
+        <Ellipse cx={12} cy={-37.8} rx={2.6} ry={2.1} fill={look.skin} />
+        <Path
+          d="M 9.8 -38.4 L 14 -37.6"
+          stroke={look.skin}
+          strokeWidth={1.3}
+          strokeLinecap="round"
+          opacity={0.95}
+        />
+      </G>
+
+      <BackHead look={look} cy={-48} phase={phase} nod={nod} turn={turn} rim />
+
+      {/* screen rim light spilling onto the shoulder facing the monitor */}
+      <Path
+        d="M 5 -40.4 Q 10 -39 11.2 -34"
+        stroke="#8FE3D0"
+        strokeWidth={1.3}
+        strokeLinecap="round"
+        fill="none"
+        opacity={0.16}
+      />
+
+      {/* the chair we are sitting in is between us and the worker: draw it last.
+          It sits in the worker's shadow, so it is a shade darker than the empty chairs. */}
+      <Polygon
+        points={CHAIR_SEAT_LOCAL.top}
+        fill={shade(chair.top, -10)}
+        stroke="#2A2119"
+        strokeOpacity={0.32}
+        strokeWidth={0.5}
+      />
+      <G>
+        <Polygon
+          points={CHAIR_BACK_LOCAL.left}
+          fill={shade(chair.left, -16)}
+          stroke="#2A2119"
+          strokeOpacity={0.42}
+          strokeWidth={0.6}
+        />
+        <Polygon
+          points={CHAIR_BACK_LOCAL.right}
+          fill={shade(chair.right, -12)}
+          stroke="#2A2119"
+          strokeOpacity={0.42}
+          strokeWidth={0.6}
+        />
+        <Polygon
+          points={CHAIR_BACK_LOCAL.top}
+          fill={shade(chair.top, -8)}
+          stroke="#2A2119"
+          strokeOpacity={0.36}
+          strokeWidth={0.6}
+        />
+        <Line
+          x1={CHAIR_BACK_LOCAL.edge.x1}
+          y1={CHAIR_BACK_LOCAL.edge.y1}
+          x2={CHAIR_BACK_LOCAL.edge.x2}
+          y2={CHAIR_BACK_LOCAL.edge.y2}
+          stroke="#2A2119"
+          strokeOpacity={0.3}
+          strokeWidth={0.5}
+        />
+        <Line
+          x1={CHAIR_BACK_LOCAL.highlight.x1}
+          y1={CHAIR_BACK_LOCAL.highlight.y1}
+          x2={CHAIR_BACK_LOCAL.highlight.x2}
+          y2={CHAIR_BACK_LOCAL.highlight.y2}
+          stroke="#F4EDE0"
+          strokeOpacity={0.2}
+          strokeWidth={1.2}
+        />
+      </G>
+      <Polygon
+        points={CHAIR_SEAT_LOCAL.front}
+        fill={shade(chair.left, -16)}
+        stroke="#2A2119"
+        strokeOpacity={0.3}
+        strokeWidth={0.5}
+      />
+      <Polygon
+        points={CHAIR_SEAT_LOCAL.side}
+        fill={shade(chair.right, -12)}
+        stroke="#2A2119"
+        strokeOpacity={0.3}
+        strokeWidth={0.5}
+      />
     </G>
   )
+}
+
+/** Back of the head: hair covers the skull, no eyes, mouth or blush. */
+function BackHead({
+  look,
+  cy,
+  phase,
+  nod = 0,
+  turn = 0,
+  rim = false,
+}: {
+  look: Look
+  cy: number
+  phase: number
+  nod?: number
+  turn?: number
+  rim?: boolean
+}) {
+  return (
+    <G transform={`translate(1.4 0) rotate(${nod} 0 ${cy + 8}) rotate(${turn * 0.5} 0 ${cy + 9})`}>
+      <Rect x={-3.6} y={cy + 7} width={7.2} height={7} rx={2.2} fill={look.skin} />
+      <Circle cx={0} cy={cy} r={11} fill={look.skin} />
+      {/* ears peek out at the sides of the hair */}
+      <Circle cx={-10.6} cy={cy + 2.4} r={2.4} fill={look.skin} />
+      <Circle cx={10.6} cy={cy + 2.4} r={2.4} fill={look.skin} />
+      <BackHair look={look} cy={cy} />
+      {look.accessory === 2 ? (
+        <G>
+          <Path
+            d={`M -10.6 ${cy + 1} Q 0 ${cy - 16} 10.6 ${cy + 1}`}
+            stroke="#2E2925"
+            strokeWidth={2.7}
+            fill="none"
+          />
+          <Rect x={-12.8} y={cy - 1} width={3.8} height={7.6} rx={1.9} fill="#2E2925" />
+          <Rect x={9} y={cy - 1} width={3.8} height={7.6} rx={1.9} fill="#2E2925" />
+        </G>
+      ) : null}
+      {rim ? (
+        <G opacity={0.22}>
+          <Path
+            d={`M -3 ${cy - 12.4} Q 6 ${cy - 10.5} 9.6 ${cy - 3.5}`}
+            stroke="#8FE3D0"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            fill="none"
+          />
+          <Path
+            d={`M 6.5 ${cy + 8} Q 9.5 ${cy + 5} 10.4 ${cy + 1}`}
+            stroke="#8FE3D0"
+            strokeWidth={1.1}
+            strokeLinecap="round"
+            fill="none"
+            opacity={0.7}
+          />
+        </G>
+      ) : null}
+    </G>
+  )
+}
+
+/** Hair from behind: a full cap over the skull, style variants kept from the front view. */
+function BackHair({ look, cy }: { look: Look; cy: number }) {
+  const c = look.hair
+  const cap = `M -11 ${cy - 1} Q -12 ${cy - 16} 0 ${cy - 16} Q 12 ${cy - 16} 11 ${cy - 1} L 11 ${cy + 7} Q 6 ${cy + 10} 0 ${cy + 9.6} Q -6 ${cy + 10} -11 ${cy + 7} Z`
+  if (look.hairStyle === 1) {
+    return (
+      <Path
+        d={`M -11 ${cy - 1} Q -12 ${cy - 16} 0 ${cy - 16} Q 12 ${cy - 16} 11 ${cy - 1} L 11.4 ${cy + 11} Q 6 ${cy + 14} 0 ${cy + 13} Q -6 ${cy + 14} -11.4 ${cy + 11} Z`}
+        fill={c}
+      />
+    )
+  }
+  if (look.hairStyle === 2) {
+    return (
+      <G>
+        <Path d={cap} fill={c} />
+        <Circle cx={0} cy={cy - 15} r={4.8} fill={c} />
+      </G>
+    )
+  }
+  if (look.hairStyle === 3) {
+    return (
+      <G fill={c}>
+        <Path d={cap} fill={c} />
+        <Circle cx={-8} cy={cy - 7} r={5.4} />
+        <Circle cx={0} cy={cy - 11} r={6.2} />
+        <Circle cx={8} cy={cy - 6} r={5.2} />
+        <Circle cx={-9.6} cy={cy + 3} r={3.6} />
+        <Circle cx={9.6} cy={cy + 3} r={3.6} />
+      </G>
+    )
+  }
+  if (look.hairStyle === 4) {
+    return (
+      <Path
+        d={`M -11 ${cy - 1} Q -12 ${cy - 16} 0 ${cy - 16} Q 12 ${cy - 16} 11 ${cy - 1} L 11.4 ${cy + 16} Q 7 ${cy + 13} 4 ${cy + 15} Q 0 ${cy + 11} -4 ${cy + 15} Q -7 ${cy + 13} -11.4 ${cy + 16} Z`}
+        fill={c}
+      />
+    )
+  }
+  if (look.hairStyle === 5) {
+    return (
+      <G>
+        <Path d={cap} fill={c} />
+        <Polygon
+          points={`-10,${cy - 6} -12,${cy - 14} -6,${cy - 9} -6,${cy - 17} -1,${cy - 10} 2,${cy - 18} 5,${cy - 10} 9,${cy - 16} 9,${cy - 7} 12,${cy - 13} 11,${cy - 3}`}
+          fill={c}
+        />
+      </G>
+    )
+  }
+  return <Path d={cap} fill={c} />
 }
 
 function Mug({ look }: { look: Look }) {

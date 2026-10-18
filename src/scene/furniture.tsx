@@ -9,7 +9,7 @@ import {
   Rect,
   Text as SvgText,
 } from 'react-native-svg'
-import { iso, isoPoints, hashIndex } from './iso'
+import { iso, isoPoints, hashIndex, TILE_H, TILE_W } from './iso'
 import { DESK_BENCHES, DESK_SEATS, type Seat } from './layout'
 import type { SceneItem } from './types'
 
@@ -411,10 +411,71 @@ function Monitor({
   )
 }
 
+/** Chair fabric for a desk index; the sprite reuses it so its chair-back overlay matches. */
+export function chairFabric(index: number) {
+  return index % 3 === 0 ? RUST : TEAL
+}
+
+const CHAIR_BACK = { gx: -0.23, gy: 0.16, w: 0.46, d: 0.09, z0: 18, h: 17 }
+const CHAIR_SEAT = { gx: -0.26, gy: -0.18, w: 0.52, d: 0.36, z0: 14, h: 4.5 }
+
+type LocalPoint = { x: number; y: number }
+
+function chairLocal(gxOff: number, gyOff: number, z: number): LocalPoint {
+  return { x: (gxOff - gyOff) * (TILE_W / 2), y: (gxOff + gyOff) * (TILE_H / 2) - z }
+}
+
+/**
+ * The chair-back faces in sprite-local coordinates (feet at 0,0), so a seated worker drawn
+ * from behind can lay the same chair in front of its lower back.
+ */
+export const CHAIR_BACK_LOCAL = (() => {
+  const { gx, gy, w, d, z0, h } = CHAIR_BACK
+  const top = h + z0
+  const a = chairLocal(gx, gy, top)
+  const b = chairLocal(gx + w, gy, top)
+  const c = chairLocal(gx + w, gy + d, top)
+  const dd = chairLocal(gx, gy + d, top)
+  const a0 = chairLocal(gx, gy + d, z0)
+  const c0 = chairLocal(gx + w, gy + d, z0)
+  const b0 = chairLocal(gx + w, gy, z0)
+  const pts = (p: LocalPoint[]) => p.map((q) => `${q.x},${q.y}`).join(' ')
+  return {
+    top: pts([a, b, c, dd]),
+    left: pts([dd, c, c0, a0]),
+    right: pts([c, b, b0, c0]),
+    edge: { x1: c.x, y1: c.y, x2: c0.x, y2: c0.y },
+    highlight: {
+      x1: chairLocal(gx + 0.05, gy + d, z0 + h - 3).x,
+      y1: chairLocal(gx + 0.05, gy + d, z0 + h - 3).y,
+      x2: chairLocal(gx + 0.3, gy + d, z0 + h - 3).x,
+      y2: chairLocal(gx + 0.3, gy + d, z0 + h - 3).y,
+    },
+    shoulder: dd,
+  }
+})()
+
+/** Seat cushion faces of the desk chair, for the seated-from-behind sprite. */
+export const CHAIR_SEAT_LOCAL = (() => {
+  const { gx, gy, w, d, z0, h } = CHAIR_SEAT
+  const top = z0 + h
+  const a = chairLocal(gx, gy, top)
+  const b = chairLocal(gx + w, gy, top)
+  const c = chairLocal(gx + w, gy + d, top)
+  const dd = chairLocal(gx, gy + d, top)
+  const a0 = chairLocal(gx, gy + d, z0)
+  const c0 = chairLocal(gx + w, gy + d, z0)
+  const b0 = chairLocal(gx + w, gy, z0)
+  const pts = (p: LocalPoint[]) => p.map((q) => `${q.x},${q.y}`).join(' ')
+  return {
+    top: pts([a, b, c, dd]),
+    front: pts([dd, c, c0, a0]),
+    side: pts([c, b, b0, c0]),
+  }
+})()
+
 function DeskChair({ seat, index }: { seat: Seat; index: number }) {
-  const gx = seat.gx - 0.26
-  const gy = seat.gy - 0.18
-  const fabric = index % 3 === 0 ? RUST : TEAL
+  const fabric = chairFabric(index)
   return (
     <G>
       <Shadow gx={seat.gx} gy={seat.gy + 0.05} rx={20} ry={8} />
@@ -422,14 +483,14 @@ function DeskChair({ seat, index }: { seat: Seat; index: number }) {
       <Box gx={seat.gx + 0.22} gy={seat.gy - 0.2} w={0.08} d={0.08} z0={0} h={14} colors={METAL} />
       <Box gx={seat.gx - 0.3} gy={seat.gy + 0.24} w={0.08} d={0.08} z0={0} h={14} colors={METAL} />
       <Box gx={seat.gx + 0.22} gy={seat.gy + 0.24} w={0.08} d={0.08} z0={0} h={14} colors={METAL} />
-      <Box gx={gx} gy={gy} w={0.52} d={0.36} z0={14} h={4.5} colors={fabric} />
+      <Box gx={seat.gx + CHAIR_SEAT.gx} gy={seat.gy + CHAIR_SEAT.gy} w={CHAIR_SEAT.w} d={CHAIR_SEAT.d} z0={CHAIR_SEAT.z0} h={CHAIR_SEAT.h} colors={fabric} />
       <Box
-        gx={gx + 0.03}
-        gy={seat.gy + 0.16}
-        w={0.46}
-        d={0.09}
-        z0={18}
-        h={27}
+        gx={seat.gx + CHAIR_BACK.gx}
+        gy={seat.gy + CHAIR_BACK.gy}
+        w={CHAIR_BACK.w}
+        d={CHAIR_BACK.d}
+        z0={CHAIR_BACK.z0}
+        h={CHAIR_BACK.h}
         colors={{
           top: fabric.top,
           left: fabric.left,
@@ -439,9 +500,9 @@ function DeskChair({ seat, index }: { seat: Seat; index: number }) {
         strokeOpacity={0.4}
       />
       <Rect
-        x={iso(seat.gx - 0.2, seat.gy + 0.17, 30).x}
-        y={iso(seat.gx - 0.2, seat.gy + 0.17, 30).y}
-        width={10}
+        x={iso(seat.gx - 0.18, seat.gy + 0.2, 32).x}
+        y={iso(seat.gx - 0.18, seat.gy + 0.2, 32).y}
+        width={9}
         height={1.2}
         rx={0.6}
         fill="#F4EDE0"

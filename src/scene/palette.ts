@@ -45,6 +45,8 @@ export const MUG_TONES = ['#F3E6D2', '#E9A94C', '#63B9A8', '#D97757', '#8FA3B8']
 export type Look = {
   shirt: string
   shirtDark: string
+  /** Back of the shirt: a touch darker, since a back view is turned away from the light. */
+  shirtBack: string
   skin: string
   hair: string
   pants: string
@@ -60,6 +62,7 @@ export function lookFor(character: Character): Look {
   return {
     shirt,
     shirtDark: shade(shirt, -34),
+    shirtBack: shade(shirt, -14),
     skin: SKIN_TONES[hashIndex(id, 1, SKIN_TONES.length)],
     hair: HAIR_TONES[hashIndex(id, 2, HAIR_TONES.length)],
     pants: PANTS_TONES[hashIndex(id, 3, PANTS_TONES.length)],
