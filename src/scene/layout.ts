@@ -1,6 +1,7 @@
 import type { Point } from './iso.ts'
 import {
   DESK_BENCHES,
+  DESK_CHAIR_BOXES,
   DESK_SEAT_SPECS,
   OBSTACLES,
   STATIC_FURNITURE,
@@ -82,16 +83,20 @@ export const LOUNGE_SEATS: Seat[] = [
 
 export const DOOR: Point = { gx: 6.9, gy: 9.72 }
 
+/*
+ * Overflow seating is computed once below from obstacle-free floor points. Keeping the
+ * lists bounded means an unexpectedly large roster can never place a character inside a
+ * sofa, under a desk, or outside the room.
+ */
 export function loungeSeatFor(index: number): Seat {
   if (index < LOUNGE_SEATS.length) return LOUNGE_SEATS[index]
   const overflow = index - LOUNGE_SEATS.length
-  return {
-    id: `lx${overflow}`,
-    gx: 8.4 + (overflow % 4) * 1.1,
-    gy: 3.6 + Math.floor(overflow / 4) * 0.9,
-    kind: 'cushion',
-    facing: 'right',
+  if (overflow < LOUNGE_OVERFLOW_SPOTS.length) return LOUNGE_OVERFLOW_SPOTS[overflow]
+  if (LOUNGE_CROWD_SPOTS.length === 0) {
+    return LOUNGE_OVERFLOW_SPOTS[LOUNGE_OVERFLOW_SPOTS.length - 1]
   }
+  const crowd = (overflow - LOUNGE_OVERFLOW_SPOTS.length) % LOUNGE_CROWD_SPOTS.length
+  return LOUNGE_CROWD_SPOTS[crowd]
 }
 
 export function deskSeatFor(index: number): Seat {
@@ -100,15 +105,12 @@ export function deskSeatFor(index: number): Seat {
 
 /** Where a working character waits when every desk is taken (south of the overflow bench). */
 export function standingSeatFor(index: number): Seat {
-  const column = index % 6
-  const row = Math.floor(index / 6)
-  return {
-    id: `s${index}`,
-    gx: 1.6 + column * 0.85,
-    gy: STANDING_LANE_Y - row * 0.45,
-    kind: 'standing',
-    facing: 'up',
+  if (index < STANDING_OVERFLOW_SPOTS.length) return STANDING_OVERFLOW_SPOTS[index]
+  if (STANDING_CROWD_SPOTS.length === 0) {
+    return STANDING_OVERFLOW_SPOTS[STANDING_OVERFLOW_SPOTS.length - 1]
   }
+  const crowd = (index - STANDING_OVERFLOW_SPOTS.length) % STANDING_CROWD_SPOTS.length
+  return STANDING_CROWD_SPOTS[crowd]
 }
 
 /**
@@ -139,8 +141,8 @@ const SEAT_PORTALS: Record<string, Point> = {
   l1: { gx: 8.65, gy: 5.12 },
   l2: { gx: 8.65, gy: 6.18 },
   l3: { gx: 8.65, gy: 7.24 },
-  l4: { gx: 13.35, gy: 5.38 },
-  l5: { gx: 13.35, gy: 7.12 },
+  l4: { gx: 12.0, gy: 5.38 },
+  l5: { gx: 12.0, gy: 6.0 },
   l6: { gx: 9.38, gy: 8.95 },
   l7: { gx: 10.45, gy: 8.95 },
   l8: { gx: 11.52, gy: 8.95 },
@@ -149,7 +151,7 @@ const SEAT_PORTALS: Record<string, Point> = {
   l11: { gx: 9.12, gy: 1.55 },
   l12: { gx: 11.02, gy: 4.1 },
   l13: { gx: 11.02, gy: 8.0 },
-  l14: { gx: 8.0, gy: 6.85 },
+  l14: { gx: 8.0, gy: 6.5 },
   l15: { gx: 9.98, gy: 8.25 },
   l16: { gx: 13.18, gy: 8.42 },
 }
@@ -176,7 +178,10 @@ export function portalForSeat(seat: Seat): Point {
 
 /** Furniture a seat belongs to; only its own sit-down/stand-up leg may cross these. */
 export function seatOwnFootprints(seat: Seat): Box[] {
-  if (seat.kind === 'desk') return [deskChairBox(seat)]
+  if (seat.kind === 'desk') {
+    const index = DESK_SEATS.findIndex((candidate) => candidate.id === seat.id)
+    return [index >= 0 ? DESK_CHAIR_BOXES[index] : deskChairBox(seat)]
+  }
   if (seat.kind === 'standing') return []
   switch (seat.id) {
     case 'l1':
@@ -381,10 +386,167 @@ function nearestReachableNode(from: Point, ignored: Box[]): number | null {
   return best
 }
 
+// ---------------------------------------------------------------------------
+// Bounded overflow spots
+//
+// The fixed lounge seats cover the normal roster. Beyond that, characters sit on
+// clear floor in the lounge (cushions/beanbag-like floor spots) and, when every
+// desk is taken, stand in the overflow waiting area. Candidates are filtered at
+// module load with a character-radius margin, then each selected spot is checked
+// against the lane graph so it always has a real walking approach.
+// ---------------------------------------------------------------------------
+
+export const SPOT_MARGIN = 0.25
+
+type SpotRegion = { x0: number; x1: number; y0: number; y1: number }
+
+const ROOM_BOUNDS = { minX: 0.3, maxX: 13.7, minY: 0.3, maxY: 9.8 }
+
+function insideRoom(point: Point): boolean {
+  return (
+    point.gx >= ROOM_BOUNDS.minX &&
+    point.gx <= ROOM_BOUNDS.maxX &&
+    point.gy >= ROOM_BOUNDS.minY &&
+    point.gy <= ROOM_BOUNDS.maxY
+  )
+}
+
+function onDoorPath(point: Point): boolean {
+  if (Math.hypot(point.gx - DOOR.gx, point.gy - DOOR.gy) < 0.65) return true
+  return Math.abs(point.gx - DOOR.gx) < 0.55 && point.gy > CORRIDOR_Y
+}
+
+function spotDistance(a: Point, b: Point): number {
+  return Math.hypot(a.gx - b.gx, a.gy - b.gy)
+}
+
+function clearSpotPoint(point: Point): boolean {
+  if (!insideRoom(point) || onDoorPath(point)) return false
+  if (OBSTACLES.some((box) => pointInBox(point, box, SPOT_MARGIN))) return false
+  return nearestReachableNode(point, []) != null
+}
+
+function collectSpotCandidates(region: SpotRegion): Point[] {
+  const out: Point[] = []
+  for (let x = region.x0; x <= region.x1 + 1e-9; x += 0.2) {
+    for (let y = region.y0; y <= region.y1 + 1e-9; y += 0.2) {
+      const point = { gx: Number(x.toFixed(3)), gy: Number(y.toFixed(3)) }
+      if (clearSpotPoint(point)) out.push(point)
+    }
+  }
+  return out
+}
+
+function selectSpots(
+  candidates: Point[],
+  avoid: Point[],
+  separation: number,
+  limit = Infinity,
+): Point[] {
+  const out: Point[] = []
+  for (const point of candidates) {
+    if (out.length >= limit) break
+    if (avoid.some((other) => spotDistance(point, other) < separation)) continue
+    if (out.some((other) => spotDistance(point, other) < separation)) continue
+    out.push(point)
+  }
+  return out
+}
+
+function overflowSeat(
+  point: Point,
+  kind: SeatKind,
+  prefix: string,
+  index: number,
+  facing: Seat['facing'],
+): Seat {
+  return { id: `${prefix}${index}`, gx: point.gx, gy: point.gy, kind, facing }
+}
+
+const fixedSeatPoints: Point[] = [...LOUNGE_SEATS, ...DESK_SEATS, DOOR].map((seat) => ({
+  gx: seat.gx,
+  gy: seat.gy,
+}))
+
+/**
+ * Beyond the two bounded overflow tiers, a large roster reuses a handful of spots with
+ * deterministic small offsets. Every offset is re-validated with the same clearance as a
+ * normal spot, so a crowd never lands in furniture or outside the room.
+ */
+const CROWD_OFFSET = 0.12
+const CROWD_OFFSETS: Point[] = [
+  { gx: 0, gy: 0 },
+  { gx: CROWD_OFFSET, gy: 0 },
+  { gx: -CROWD_OFFSET, gy: 0 },
+  { gx: 0, gy: CROWD_OFFSET },
+  { gx: 0, gy: -CROWD_OFFSET },
+]
+
+function crowdVariants(points: Point[]): Point[] {
+  const out: Point[] = []
+  for (const point of points) {
+    for (const offset of CROWD_OFFSETS) {
+      const candidate = {
+        gx: Number((point.gx + offset.gx).toFixed(3)),
+        gy: Number((point.gy + offset.gy).toFixed(3)),
+      }
+      if (!insideRoom(candidate) || onDoorPath(candidate)) continue
+      if (OBSTACLES.some((box) => pointInBox(candidate, box, SPOT_MARGIN))) continue
+      if (nearestReachableNode(candidate, []) == null) continue
+      out.push(candidate)
+    }
+  }
+  return out
+}
+
+const loungeCandidates = collectSpotCandidates({ x0: 8.2, x1: 13.6, y0: 2.0, y1: 9.2 })
+const loungeBasePoints = selectSpots(loungeCandidates, fixedSeatPoints, 0.8)
+const loungeCrowdPoints = crowdVariants(
+  selectSpots(loungeCandidates, [...fixedSeatPoints, ...loungeBasePoints], 0.55, 8),
+)
+
+const standingCandidates = collectSpotCandidates({ x0: 0.9, x1: 6.6, y0: 8.0, y1: 9.45 })
+const standingBasePoints = selectSpots(
+  standingCandidates,
+  [...fixedSeatPoints, ...loungeBasePoints],
+  0.7,
+)
+const standingCrowdPoints = crowdVariants(
+  selectSpots(
+    standingCandidates,
+    [...fixedSeatPoints, ...loungeBasePoints, ...standingBasePoints],
+    0.4,
+    8,
+  ),
+)
+
+export const LOUNGE_OVERFLOW_SPOTS: Seat[] = loungeBasePoints.map((point, index) =>
+  overflowSeat(point, 'cushion', 'lx', index, 'right'),
+)
+export const LOUNGE_CROWD_SPOTS: Seat[] = loungeCrowdPoints.map((point, index) =>
+  overflowSeat(point, 'cushion', 'lc', index, 'right'),
+)
+export const STANDING_OVERFLOW_SPOTS: Seat[] = standingBasePoints.map((point, index) =>
+  overflowSeat(point, 'standing', 's', index, 'up'),
+)
+export const STANDING_CROWD_SPOTS: Seat[] = standingCrowdPoints.map((point, index) =>
+  overflowSeat(point, 'standing', 'sc', index, 'up'),
+)
+
+/** Unique overflow seats before the validated crowd fallback starts cycling. */
+export const MAX_LOUNGE_SPOTS = LOUNGE_OVERFLOW_SPOTS.length
+export const MAX_STANDING_SPOTS = STANDING_OVERFLOW_SPOTS.length
+/** Total seats including fixed lounge seats and both tiers of overflow spots. */
+export const LOUNGE_CAPACITY =
+  LOUNGE_SEATS.length + MAX_LOUNGE_SPOTS + LOUNGE_CROWD_SPOTS.length
+export const STANDING_CAPACITY = MAX_STANDING_SPOTS + STANDING_CROWD_SPOTS.length
+
 type HeapEntry = { node: number; distance: number }
 
-function dijkstra(start: number, goal: number): number[] {
-  if (start === goal) return [start]
+type SearchResult = { distances: Float64Array; previous: Int32Array }
+
+/** Dijkstra with a small turn penalty so equal-length routes prefer fewer corners. */
+function dijkstraSearch(start: number, goal: number | null): SearchResult {
   const distances = new Float64Array(G.length)
   distances.fill(Infinity)
   const previous = new Int32Array(G.length)
@@ -427,9 +589,18 @@ function dijkstra(start: number, goal: number): number[] {
   while (heap.length > 0) {
     const current = pop()!
     if (current.distance > distances[current.node]) continue
-    if (current.node === goal) break
+    if (goal != null && current.node === goal) break
     for (const edge of G[current.node].edges) {
-      const next = current.distance + edge.cost
+      let cost = edge.cost
+      const parent = previous[current.node]
+      if (parent >= 0) {
+        const inX = G[current.node].gx - G[parent].gx
+        const inY = G[current.node].gy - G[parent].gy
+        const outX = G[edge.to].gx - G[current.node].gx
+        const outY = G[edge.to].gy - G[current.node].gy
+        if (Math.abs(inX * outY - inY * outX) > 1e-9) cost += 0.35
+      }
+      const next = current.distance + cost
       if (next + 1e-9 < distances[edge.to]) {
         distances[edge.to] = next
         previous[edge.to] = current.node
@@ -438,12 +609,137 @@ function dijkstra(start: number, goal: number): number[] {
     }
   }
 
+  return { distances, previous }
+}
+
+function dijkstra(start: number, goal: number): number[] {
+  if (start === goal) return [start]
+  const { distances, previous } = dijkstraSearch(start, goal)
   if (!Number.isFinite(distances[goal])) return []
   const path: number[] = []
   for (let at = goal; at !== -1; at = previous[at]) {
     path.push(at)
     if (at === start) break
   }
+  return path.reverse()
+}
+
+/** Quadrant bucket used by headingFor() in the planner. */
+function directionBucket(gx: number, gy: number): number {
+  const screenX = gx - gy
+  const screenY = gx + gy
+  return (screenY < 0 ? 2 : 0) + (screenX < 0 ? 1 : 0)
+}
+
+/**
+ * Shortest graph path with the number of facing changes as the primary cost and distance
+ * as the tie-break. This keeps long walks from zig-zagging through every lane corner.
+ */
+function turnAwarePath(
+  start: number,
+  goal: number,
+  startDirection?: number,
+  goalDirection?: number,
+): number[] {
+  if (start === goal) return [start]
+  const stateCount = G.length * 4
+  const startState = stateCount
+  const total = stateCount + 1
+  const distances = new Float64Array(total)
+  distances.fill(Infinity)
+  const previous = new Int32Array(total)
+  previous.fill(-1)
+  const heap: HeapEntry[] = []
+
+  const push = (entry: HeapEntry) => {
+    heap.push(entry)
+    let i = heap.length - 1
+    while (i > 0) {
+      const parent = (i - 1) >> 1
+      if (heap[parent].distance <= heap[i].distance) break
+      ;[heap[parent], heap[i]] = [heap[i], heap[parent]]
+      i = parent
+    }
+  }
+
+  const pop = (): HeapEntry | undefined => {
+    if (heap.length === 0) return undefined
+    const top = heap[0]
+    const last = heap.pop()!
+    if (heap.length > 0) {
+      heap[0] = last
+      let i = 0
+      for (;;) {
+        const left = i * 2 + 1
+        const right = left + 1
+        let smallest = i
+        if (left < heap.length && heap[left].distance < heap[smallest].distance) smallest = left
+        if (right < heap.length && heap[right].distance < heap[smallest].distance) smallest = right
+        if (smallest === i) break
+        ;[heap[smallest], heap[i]] = [heap[i], heap[smallest]]
+        i = smallest
+      }
+    }
+    return top
+  }
+
+  const TURN_COST = 1000
+  distances[startState] = 0
+  for (const edge of G[start].edges) {
+    const direction = directionBucket(
+      G[edge.to].gx - G[start].gx,
+      G[edge.to].gy - G[start].gy,
+    )
+    const state = edge.to * 4 + direction
+    const cost = edge.cost + (startDirection != null && direction !== startDirection ? TURN_COST : 0)
+    if (cost < distances[state]) {
+      distances[state] = cost
+      previous[state] = startState
+      push({ node: state, distance: cost })
+    }
+  }
+
+  let goalState = -1
+  let goalCost = Infinity
+  while (heap.length > 0) {
+    const current = pop()!
+    if (current.distance > distances[current.node]) continue
+    if (current.distance >= goalCost) break
+    if (current.node !== startState && Math.floor(current.node / 4) === goal) {
+      const direction = current.node % 4
+      const finalCost =
+        current.distance + (goalDirection != null && direction !== goalDirection ? TURN_COST : 0)
+      if (finalCost < goalCost) {
+        goalCost = finalCost
+        goalState = current.node
+      }
+      continue
+    }
+    if (current.node === startState) continue
+    const node = Math.floor(current.node / 4)
+    const direction = current.node % 4
+    for (const edge of G[node].edges) {
+      const nextDirection = directionBucket(
+        G[edge.to].gx - G[node].gx,
+        G[edge.to].gy - G[node].gy,
+      )
+      const weight = edge.cost + (nextDirection === direction ? 0 : TURN_COST)
+      const nextState = edge.to * 4 + nextDirection
+      const nextDistance = current.distance + weight
+      if (nextDistance + 1e-9 < distances[nextState]) {
+        distances[nextState] = nextDistance
+        previous[nextState] = current.node
+        push({ node: nextState, distance: nextDistance })
+      }
+    }
+  }
+
+  if (goalState < 0) return []
+  const path: number[] = []
+  for (let state = goalState; state !== -1 && state !== startState; state = previous[state]) {
+    path.push(Math.floor(state / 4))
+  }
+  path.push(start)
   return path.reverse()
 }
 
@@ -469,6 +765,105 @@ function simplify(points: Point[]): Point[] {
     out.push(b)
   }
   out.push(points[points.length - 1])
+  return out
+}
+
+/** A segment is clear when it does not touch any unignored footprint at routing clearance. */
+function routeSegmentClear(a: Point, b: Point, ignored: Box[]): boolean {
+  const obstacles = ignored.length === 0 ? OBSTACLES : OBSTACLES.filter((box) => !ignored.includes(box))
+  return !segmentCrossesAny(a, b, obstacles, 0)
+}
+
+const MIN_ROUTE_LEG = 0.4
+
+/**
+ * Greedy line-of-sight string pulling: from each anchor jump to the farthest later point
+ * whose straight segment is clear. The destination portal and sit-down leg are kept.
+ */
+function smoothRoute(
+  points: Point[],
+  anchor: number,
+  end: number,
+  startIgnored: Box[],
+): Point[] {
+  const out = points.slice(0, anchor + 1)
+  let i = anchor
+  while (i < end) {
+    let chosen = i + 1
+    for (let j = end; j > i; j--) {
+      if (routeSegmentClear(points[i], points[j], i === anchor ? startIgnored : [])) {
+        chosen = j
+        break
+      }
+    }
+    out.push(points[chosen])
+    i = chosen
+  }
+  return out
+}
+
+/**
+ * Shortcut a route through any clear grid node, not just the nodes Dijkstra happened to
+ * pick. Distances to the destination keep the greedy jump honest; this is only used when
+ * the normal string pull still leaves a needlessly angular route.
+ */
+function visibilityShortcut(
+  anchor: Point,
+  destPortal: Point,
+  destNode: number,
+  firstIgnored: Box[],
+): Point[] | null {
+  const { distances } = dijkstraSearch(destNode, null)
+  const points: Point[] = [{ gx: anchor.gx, gy: anchor.gy }]
+  let at = anchor
+
+  for (let guard = 0; guard <= G.length; guard++) {
+    const ignored = points.length === 1 ? firstIgnored : []
+    if (routeSegmentClear(at, destPortal, ignored)) {
+      pushPoint(points, destPortal)
+      return points
+    }
+
+    let best = -1
+    let bestCost = Infinity
+    for (let i = 0; i < gridCount; i++) {
+      if (!Number.isFinite(distances[i])) continue
+      const node = G[i]
+      const hop = Math.hypot(node.gx - at.gx, node.gy - at.gy)
+      if (hop < 1e-6) continue
+      const cost = hop + distances[i]
+      if (cost >= bestCost - 1e-9) continue
+      if (!routeSegmentClear(at, node, ignored)) continue
+      best = i
+      bestCost = cost
+    }
+    if (best < 0) return null
+    pushPoint(points, G[best])
+    at = G[best]
+  }
+  return null
+}
+
+/**
+ * Drop corners that leave a sub-half-tile leg, as long as joining the neighbours stays
+ * clear. The final sit-down leg is intentionally exempt.
+ */
+function pruneShortLegs(points: Point[], portalIndex: number, anchor: number): Point[] {
+  const out = points.slice()
+  let i = anchor + 1
+  while (i < portalIndex && i < out.length - 1) {
+    const a = out[i - 1]
+    const b = out[i]
+    const c = out[i + 1]
+    const short = Math.hypot(a.gx - b.gx, a.gy - b.gy) < MIN_ROUTE_LEG ||
+      Math.hypot(b.gx - c.gx, b.gy - c.gy) < MIN_ROUTE_LEG
+    if (short && routeSegmentClear(a, c, [])) {
+      out.splice(i, 1)
+      if (i > anchor + 1) i -= 1
+      continue
+    }
+    i += 1
+  }
   return out
 }
 
@@ -507,18 +902,26 @@ function resolveSeat(point: Point, kind: SeatKind | 'door', row?: 1 | 2 | 3): Se
  * For a mid-walk retarget pass null; the first leg goes to the nearest reachable graph
  * node, ignoring only furniture the current point is already inside.
  */
-export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point[] {
+export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point[] | null {
+  if (!insideRoom(from) || !insideRoom({ gx: to.gx, gy: to.gy })) return null
+
+  const ownFrom = fromSeat ? seatOwnFootprints(fromSeat) : []
+  const ownTo = seatOwnFootprints(to)
   const destPortal = portalForSeat(to)
   const startIgnored = fromSeat
-    ? seatOwnFootprints(fromSeat)
+    ? ownFrom
     : OBSTACLES.filter((box) => pointInBox(from, box, 1e-6))
 
-  const points: Point[] = [{ gx: from.gx, gy: from.gy }]
+  const raw: Point[] = [{ gx: from.gx, gy: from.gy }]
+  let anchor = 0
   let startNode: number | null = null
 
   if (fromSeat) {
-    pushPoint(points, portalForSeat(fromSeat))
-    startNode = portalIndex.get(fromSeat.id) ?? nearestReachableNode(points[points.length - 1], startIgnored)
+    pushPoint(raw, portalForSeat(fromSeat))
+    anchor = raw.length - 1
+    startNode =
+      portalIndex.get(fromSeat.id) ??
+      nearestReachableNode(raw[raw.length - 1], startIgnored)
   } else {
     const doorIndex = portalIndex.get('door')
     const atDoor =
@@ -529,24 +932,89 @@ export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point
   }
 
   const destIndex = portalIndex.get(to.id)
-  const destNode =
-    destIndex ?? nearestReachableNode(destPortal, seatOwnFootprints(to))
+  const destNode = destIndex ?? nearestReachableNode(destPortal, ownTo)
 
-  const nodePath = startNode != null && destNode != null ? dijkstra(startNode, destNode) : []
-  for (const index of nodePath) pushPoint(points, G[index])
-  pushPoint(points, destPortal)
-  pushPoint(points, { gx: to.gx, gy: to.gy })
+  // Detect an unreachable endpoint before appending the seat. Returning null lets the
+  // planner keep the character in place instead of drawing a route through furniture.
+  if (startNode == null || destNode == null) return null
+  const startDirection =
+    fromSeat != null
+      ? directionBucket(
+          portalForSeat(fromSeat).gx - from.gx,
+          portalForSeat(fromSeat).gy - from.gy,
+        )
+      : undefined
+  const sitLegX = to.gx - destPortal.gx
+  const sitLegY = to.gy - destPortal.gy
+  const goalDirection =
+    Math.hypot(sitLegX, sitLegY) > 1e-9 ? directionBucket(sitLegX, sitLegY) : undefined
+  const nodePath = turnAwarePath(startNode, destNode, startDirection, goalDirection)
+  if (nodePath.length === 0) return null
 
-  // If the graph could not connect (should not happen for this fixed room), keep the
-  // route honest: a direct clear line, or the current point only as a last resort.
-  if (points.length === 1 && startNode == null) {
-    const directIgnored = [...startIgnored, ...seatOwnFootprints(to)]
-    if (!segmentCrossesAny(from, to, OBSTACLES.filter((box) => !directIgnored.includes(box)))) {
-      pushPoint(points, { gx: to.gx, gy: to.gy })
+  for (const index of nodePath) pushPoint(raw, G[index])
+  pushPoint(raw, destPortal)
+  pushPoint(raw, { gx: to.gx, gy: to.gy })
+
+  // The sit-down/stand-up leg may enter the destination's own furniture, but never
+  // anything else.
+  if (segmentCrossesAny(destPortal, to, OBSTACLES.filter((box) => !ownTo.includes(box)), 0)) {
+    return null
+  }
+
+  let destPortalIndex = raw.length - 1
+  for (let i = raw.length - 1; i >= 0; i--) {
+    if (
+      Math.abs(raw[i].gx - destPortal.gx) < 1e-6 &&
+      Math.abs(raw[i].gy - destPortal.gy) < 1e-6
+    ) {
+      destPortalIndex = i
+      break
     }
   }
 
-  return simplify(points)
+  const smoothed = smoothRoute(
+    raw,
+    anchor,
+    destPortalIndex,
+    anchor === 0 ? startIgnored : [],
+  )
+  if (destPortalIndex < raw.length - 1) pushPoint(smoothed, raw[raw.length - 1])
+
+  const destinationPortal = destPortalIndex < raw.length - 1 ? smoothed.length - 2 : smoothed.length - 1
+  let result = simplify(pruneShortLegs(smoothed, destinationPortal, anchor))
+
+  // If the route is still visually choppy, re-route greedily through any visible node.
+  const portalInResult = result.findIndex(
+    (point) =>
+      Math.abs(point.gx - destPortal.gx) < 1e-6 && Math.abs(point.gy - destPortal.gy) < 1e-6,
+  )
+  let hasShortLeg = false
+  if (portalInResult > 0) {
+    for (let i = 1; i <= portalInResult; i++) {
+      const a = result[i - 1]
+      const b = result[i]
+      if (Math.hypot(a.gx - b.gx, a.gy - b.gy) < MIN_ROUTE_LEG) {
+        hasShortLeg = true
+        break
+      }
+    }
+  }
+  if (result.length > 8 || hasShortLeg) {
+    const shortcut = visibilityShortcut(
+      raw[anchor],
+      destPortal,
+      destNode,
+      anchor === 0 ? startIgnored : [],
+    )
+    if (shortcut) {
+      const combined = raw.slice(0, anchor)
+      for (const point of shortcut) pushPoint(combined, point)
+      if (destPortalIndex < raw.length - 1) pushPoint(combined, raw[raw.length - 1])
+      result = simplify(combined)
+    }
+  }
+
+  return result
 }
 
 type PathOptions = {
@@ -560,11 +1028,11 @@ type PathOptions = {
  * Backwards-compatible wrapper used by the planner and tests: resolve the origin and
  * destination seats from their points/kinds and route through the lane graph.
  */
-export function buildPath(from: Point, to: Point, opts: PathOptions): Point[] {
+export function buildPath(from: Point, to: Point, opts: PathOptions): Point[] | null {
   const fromSeat =
     opts.fromKind === 'door' ? null : resolveSeat(from, opts.fromKind, opts.fromRow)
   const toSeat = resolveSeat(to, opts.toKind, opts.toRow)
-  if (!toSeat) return [{ gx: from.gx, gy: from.gy }]
+  if (!toSeat) return null
   return buildRoute(from, toSeat, fromSeat)
 }
 
@@ -578,11 +1046,11 @@ export function buildRetargetPath(
   walkedTiles: number,
   to: Point,
   opts: { toKind: SeatKind; toRow?: 1 | 2 | 3 },
-): Point[] {
+): Point[] | null {
   void path
   void walkedTiles
   const toSeat = resolveSeat(to, opts.toKind, opts.toRow)
-  if (!toSeat) return [{ gx: current.gx, gy: current.gy }]
+  if (!toSeat) return null
   return buildRoute(current, toSeat, null)
 }
 

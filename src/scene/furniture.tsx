@@ -11,7 +11,7 @@ import {
 } from 'react-native-svg'
 import { iso, isoPoints, hashIndex, TILE_H, TILE_W } from './iso'
 import { DESK_BENCHES, DESK_SEATS, type Seat } from './layout'
-import { FURNITURE_FOOTPRINTS, deskChairBox, deskMonitorBox } from './footprints'
+import { FURNITURE_FOOTPRINTS, type Box } from './footprints'
 import type { SceneItem } from './types'
 
 type BoxColors = { top: string; left: string; right: string }
@@ -113,14 +113,14 @@ export function buildFurniture(occupied: Set<number>, now: number): SceneItem[] 
   })
 
   DESK_SEATS.forEach((seat, index) => {
-    // The monitor, keyboard and desk clutter are one unit. Its front-most part is
-    // the keyboard, which sits just behind the worker at this seat.
-    const monitorBox = deskMonitorBox(seat)
-    const chairBox = deskChairBox(seat)
+    // The monitor, keyboard and desk clutter are one unit. Its full footprint includes
+    // the keyboard sitting just behind the worker at this seat.
+    const monitorBox = FURNITURE_FOOTPRINTS.monitors[index]
+    const chairBox = FURNITURE_FOOTPRINTS.chairs[index]
     add(
       `monitor-${index}`,
-      frontDepth(monitorBox.gx + 0.13, monitorBox.gy + 0.48, 0.64, 0.2),
-      <Monitor seat={seat} occupied={occupied.has(index)} now={now} index={index} />,
+      frontDepth(monitorBox.gx, monitorBox.gy, monitorBox.w, monitorBox.d),
+      <Monitor seat={seat} box={monitorBox} occupied={occupied.has(index)} now={now} index={index} />,
     )
     add(
       `chair-${index}`,
@@ -166,10 +166,10 @@ export function buildFurniture(occupied: Set<number>, now: number): SceneItem[] 
   const sideTable = FURNITURE_FOOTPRINTS.sideTable
   const lamp = FURNITURE_FOOTPRINTS.floorLamp
 
-  add('armchair-1', frontDepth(northArm.gx, northArm.gy, northArm.w, northArm.d), <ArmchairBase gy={northArm.gy} />)
-  add('armchair-1-back', frontDepth(northArm.gx + northArm.w - 0.12, northArm.gy, 0.12, northArm.d), <ArmchairBack gy={northArm.gy} />)
-  add('armchair-2', frontDepth(southArm.gx, southArm.gy, southArm.w, southArm.d), <ArmchairBase gy={southArm.gy} />)
-  add('armchair-2-back', frontDepth(southArm.gx + southArm.w - 0.12, southArm.gy, 0.12, southArm.d), <ArmchairBack gy={southArm.gy} />)
+  add('armchair-1', frontDepth(northArm.gx, northArm.gy, northArm.w, northArm.d), <ArmchairBase box={northArm} />)
+  add('armchair-1-back', frontDepth(northArm.gx + northArm.w - 0.12, northArm.gy, 0.12, northArm.d), <ArmchairBack box={northArm} />)
+  add('armchair-2', frontDepth(southArm.gx, southArm.gy, southArm.w, southArm.d), <ArmchairBase box={southArm} />)
+  add('armchair-2-back', frontDepth(southArm.gx + southArm.w - 0.12, southArm.gy, 0.12, southArm.d), <ArmchairBack box={southArm} />)
   add('coffee-table', frontDepth(coffeeTable.gx, coffeeTable.gy, coffeeTable.w, coffeeTable.d), <CoffeeTable now={now} />)
   add('ottoman-1', frontDepth(northOttoman.gx, northOttoman.gy, northOttoman.w, northOttoman.d), <Ottoman gy={northOttoman.gy} />)
   add('ottoman-2', frontDepth(southOttoman.gx, southOttoman.gy, southOttoman.w, southOttoman.d), <Ottoman gy={southOttoman.gy} />)
@@ -192,16 +192,11 @@ export function buildFurniture(occupied: Set<number>, now: number): SceneItem[] 
   add('bookshelf', frontDepth(bookshelf.gx, bookshelf.gy, bookshelf.w, bookshelf.d), <Bookshelf />)
   add('floor-lamp', lamp.gx + lamp.w / 2 + lamp.gy + lamp.d / 2 + 0.3, <FloorLamp now={now} />)
 
-  const plantSpecs = [
-    { box: FURNITURE_FOOTPRINTS.plants[0], seed: 1, scale: 1.1, key: 'lounge' },
-    { box: FURNITURE_FOOTPRINTS.plants[1], seed: 2, scale: 0.9, key: 'door' },
-    { box: FURNITURE_FOOTPRINTS.plants[2], seed: 3, scale: 0.8, key: 'shelf' },
-    { box: FURNITURE_FOOTPRINTS.plants[3], seed: 4, scale: 0.75, key: 'desk' },
-  ]
-  plantSpecs.forEach(({ box, seed, scale, key }) => {
+  FURNITURE_FOOTPRINTS.plantSpecs.forEach((spec, index) => {
+    const { box, seed } = spec
     const gx = box.gx + box.w / 2
     const gy = box.gy + box.d / 2
-    add(`plant-${key}`, gx + gy + 0.5 * scale, <Plant gx={gx} gy={gy} seed={seed} scale={scale} />)
+    add(`plant-${index}`, gx + gy + 0.5 * spec.scale, <Plant box={box} seed={seed} />)
   })
   add('side-table', frontDepth(sideTable.gx, sideTable.gy, sideTable.w, sideTable.d), <SideTable />)
 
@@ -256,16 +251,18 @@ function DeskBench({ bench, index }: { bench: (typeof DESK_BENCHES)[number]; ind
 
 function Monitor({
   seat,
+  box,
   occupied,
   now,
   index,
 }: {
   seat: Seat
+  box: Box
   occupied: boolean
   now: number
   index: number
 }) {
-  const monitorBox = deskMonitorBox(seat)
+  const monitorBox = box
   const gy = monitorBox.gy
   const gx = monitorBox.gx
   const frontGy = gy + 0.06
@@ -385,12 +382,12 @@ function Monitor({
         </G>
       )}
 
-      {/* keyboard + desk clutter */}
+      {/* keyboard + desk clutter; the shared monitor box includes this extent */}
       <Box
-        gx={seat.gx - 0.32}
+        gx={gx + 0.13}
         gy={gy + 0.48}
         w={0.64}
-        d={0.2}
+        d={monitorBox.d - 0.48}
         z0={34.2}
         h={1.6}
         colors={{ top: '#312C27', left: '#24201C', right: '#1C1916' }}
@@ -617,17 +614,17 @@ function SofaArm({ gy }: { gy: number }) {
   )
 }
 
-function ArmchairBase({ gy }: { gy: number }) {
-  const gx = 12.12
+function ArmchairBase({ box }: { box: Box }) {
+  const { gx, gy, w, d } = box
   return (
     <G>
-      <Shadow gx={gx + 0.5} gy={gy + 0.42} rx={34} ry={18} />
-      <Box gx={gx} gy={gy} w={1.0} d={0.86} z0={0} h={20} colors={RUST} />
+      <Shadow gx={gx + w / 2} gy={gy + d / 2} rx={34} ry={18} />
+      <Box gx={gx} gy={gy} w={w} d={d} z0={0} h={20} colors={RUST} />
       <Box
         gx={gx + 0.08}
         gy={gy + 0.1}
-        w={0.78}
-        d={0.66}
+        w={w - 0.22}
+        d={d - 0.2}
         z0={20}
         h={5}
         colors={{ top: '#C47D5C', left: '#A06045', right: '#854B34' }}
@@ -635,7 +632,7 @@ function ArmchairBase({ gy }: { gy: number }) {
       <Box
         gx={gx}
         gy={gy}
-        w={1.0}
+        w={w}
         d={0.15}
         z0={20}
         h={22}
@@ -643,8 +640,8 @@ function ArmchairBase({ gy }: { gy: number }) {
       />
       <Box
         gx={gx}
-        gy={gy + 0.71}
-        w={1.0}
+        gy={gy + d - 0.15}
+        w={w}
         d={0.15}
         z0={20}
         h={22}
@@ -654,13 +651,13 @@ function ArmchairBase({ gy }: { gy: number }) {
   )
 }
 
-function ArmchairBack({ gy }: { gy: number }) {
+function ArmchairBack({ box }: { box: Box }) {
   return (
     <Box
-      gx={13.0}
-      gy={gy}
+      gx={box.gx + box.w - 0.12}
+      gy={box.gy}
       w={0.12}
-      d={0.86}
+      d={box.d}
       z0={20}
       h={30}
       colors={{ top: '#B26C4E', left: '#8D543D', right: '#6B3F2C' }}
@@ -942,17 +939,10 @@ function FloorLamp({ now }: { now: number }) {
   )
 }
 
-function Plant({
-  gx,
-  gy,
-  seed,
-  scale = 1,
-}: {
-  gx: number
-  gy: number
-  seed: number
-  scale?: number
-}) {
+function Plant({ box, seed }: { box: Box; seed: number }) {
+  const gx = box.gx + box.w / 2
+  const gy = box.gy + box.d / 2
+  const scale = box.w / 0.48
   const p = iso(gx, gy)
   const leaves = Array.from({ length: 7 }).map((_, i) => {
     const angle = -70 + i * 23 + (seed % 3) * 5

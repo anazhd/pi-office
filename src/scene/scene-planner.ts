@@ -5,7 +5,6 @@ import {
   buildRetargetPath,
   deskSeatFor,
   DESK_CAPACITY,
-  directionAlong,
   DOOR,
   loungeSeatFor,
   pathLength,
@@ -103,6 +102,55 @@ export function headingFor(dir: Point): Heading {
   return toLeft ? 'front-left' : 'front-right'
 }
 
+/** A facing only changes for a leg long enough to read as a real direction change. */
+export const MIN_HEADING_SEGMENT = 0.4
+
+/**
+ * Heading at a distance along a polyline with hysteresis: short corner-cutting legs keep
+ * the previous facing instead of making the walker twitch between directions.
+ */
+export function headingAlongPath(points: Point[], distance: number): Heading {
+  if (points.length < 2) return 'front-right'
+  const segments: Array<{ dir: Point; len: number }> = []
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]
+    const b = points[i]
+    const len = Math.hypot(b.gx - a.gx, b.gy - a.gy)
+    if (len <= 1e-9) continue
+    segments.push({ dir: { gx: (b.gx - a.gx) / len, gy: (b.gy - a.gy) / len }, len })
+  }
+  if (segments.length === 0) return 'front-right'
+
+  let remaining = Math.max(0, distance)
+  let index = 0
+  for (let i = 0; i < segments.length; i++) {
+    index = i
+    if (remaining <= segments[i].len || i === segments.length - 1) break
+    remaining -= segments[i].len
+  }
+
+  if (segments[index].len < MIN_HEADING_SEGMENT) {
+    let stable = -1
+    for (let i = index - 1; i >= 0; i--) {
+      if (segments[i].len >= MIN_HEADING_SEGMENT) {
+        stable = i
+        break
+      }
+    }
+    if (stable < 0) {
+      for (let i = index + 1; i < segments.length; i++) {
+        if (segments[i].len >= MIN_HEADING_SEGMENT) {
+          stable = i
+          break
+        }
+      }
+    }
+    if (stable >= 0) index = stable
+  }
+
+  return headingFor(segments[index].dir)
+}
+
 /** Pure interpolation from a committed plan and the clock. Never mutates the plan. */
 export function positionAt(plan: Plan, now: number): PlanPosition {
   const walkLen = plan.path.length > 1 ? pathLength(plan.path) : 0
@@ -122,9 +170,7 @@ export function positionAt(plan: Plan, now: number): PlanPosition {
     const p = pointAlong(plan.path, u)
     gx = p.gx
     gy = p.gy
-    // Sample slightly ahead so the walker turns toward the next leg before reaching the corner.
-    const lead = walkLen > 0 ? Math.min(1, u + 0.35 / walkLen) : u
-    heading = headingFor(directionAlong(plan.path, lead))
+    heading = headingAlongPath(plan.path, strideTiles)
   } else if (plan.path.length > 1) {
     progress = 1
   }
@@ -254,6 +300,8 @@ export function step(
     let walkStart = now
     let walkDuration = 0
     let enteredAt = now
+    let plannedSeat = seat
+    let plannedDeskIndex = deskIndex
 
     if (firstRender) {
       // Nobody walks in on the first render: the office is already populated.
@@ -262,33 +310,53 @@ export function step(
       enteredAt = previous.enteredAt
       if (previous.seat.id !== seat.id) {
         const current = positionAt(previous, now)
-        if (current.walking) {
-          // Mid-walk retarget: continue/retrace the existing route to a safe junction first.
-          path = buildRetargetPath(
-            previous.path,
-            { gx: current.gx, gy: current.gy },
-            current.distance,
-            seat,
-            { toKind: seat.kind, toRow: seat.row },
-          )
+        const route = current.walking
+          ? // Mid-walk retarget: continue/retrace the existing route to a safe junction first.
+            buildRetargetPath(
+              previous.path,
+              { gx: current.gx, gy: current.gy },
+              current.distance,
+              seat,
+              { toKind: seat.kind, toRow: seat.row },
+            )
+          : buildPath(
+              { gx: current.gx, gy: current.gy },
+              seat,
+              {
+                fromKind: previous.seat.kind,
+                fromRow: previous.seat.row,
+                toKind: seat.kind,
+                toRow: seat.row,
+              },
+            )
+
+        if (route == null) {
+          // No verified route. Hold the character where it is (or at its old seat) and do
+          // not adopt the unreachable target; a later snapshot retries the move.
+          plannedDeskIndex = previous.deskIndex
+          if (current.walking) {
+            plannedSeat = {
+              ...previous.seat,
+              id: `hold-${char.id}`,
+              gx: current.gx,
+              gy: current.gy,
+            }
+            path = [{ gx: current.gx, gy: current.gy }]
+          } else {
+            plannedSeat = previous.seat
+            path = []
+          }
+          walkStart = now
+          walkDuration = 0
         } else {
-          path = buildPath(
-            { gx: current.gx, gy: current.gy },
-            seat,
-            {
-              fromKind: previous.seat.kind,
-              fromRow: previous.seat.row,
-              toKind: seat.kind,
-              toRow: seat.row,
-            },
+          path = route
+          walkStart = now
+          walkDuration = clamp(
+            pathLength(path) * WALK_MS_PER_TILE,
+            WALK_MIN_MS,
+            WALK_MAX_MS,
           )
         }
-        walkStart = now
-        walkDuration = clamp(
-          pathLength(path) * WALK_MS_PER_TILE,
-          WALK_MIN_MS,
-          WALK_MAX_MS,
-        )
       } else {
         path = previous.path
         walkStart = previous.walkStart
@@ -296,21 +364,34 @@ export function step(
       }
     } else {
       const from = isNew ? DOOR : { gx: seat.gx, gy: seat.gy }
-      path = buildPath(from, seat, {
+      const route = buildPath(from, seat, {
         fromKind: isNew ? 'door' : seat.kind,
         fromRow: isNew ? undefined : seat.row,
         toKind: seat.kind,
         toRow: seat.row,
       })
-      walkDuration = isNew
-        ? clamp(pathLength(path) * WALK_MS_PER_TILE, WALK_MIN_MS, WALK_MAX_MS)
-        : 0
+      if (route == null) {
+        plannedSeat = {
+          ...seat,
+          id: `hold-${char.id}`,
+          gx: from.gx,
+          gy: from.gy,
+        }
+        plannedDeskIndex = null
+        path = [{ gx: from.gx, gy: from.gy }]
+        walkDuration = 0
+      } else {
+        path = route
+        walkDuration = isNew
+          ? clamp(pathLength(path) * WALK_MS_PER_TILE, WALK_MIN_MS, WALK_MAX_MS)
+          : 0
+      }
     }
 
     plans.set(char.id, {
       char,
-      seat,
-      deskIndex,
+      seat: plannedSeat,
+      deskIndex: plannedDeskIndex,
       path,
       walkStart,
       walkDuration,

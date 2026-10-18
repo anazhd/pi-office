@@ -14,23 +14,38 @@ import {
   DOOR,
   LANE_GRAPH,
   LANE_ROUTE_PAD,
+  LOUNGE_CAPACITY,
+  LOUNGE_CROWD_SPOTS,
+  LOUNGE_OVERFLOW_SPOTS,
   LOUNGE_SEATS,
+  MAX_LOUNGE_SPOTS,
+  MAX_STANDING_SPOTS,
   pathLength,
   portalForSeat,
   seatOwnFootprints,
   segmentCrossesObstacle,
+  SPOT_MARGIN,
   standingSeatFor,
+  STANDING_CAPACITY,
+  STANDING_CROWD_SPOTS,
+  STANDING_OVERFLOW_SPOTS,
+  loungeSeatFor,
   type Seat,
 } from '../layout.ts'
 import {
+  DESK_CHAIR_BOXES,
+  DESK_MONITOR_BOXES,
   FURNITURE_FOOTPRINTS,
   OBSTACLES,
+  PLANT_SPECS,
   STATIC_FURNITURE,
   type Box,
 } from '../footprints.ts'
 import {
   DESK_GRACE_MS,
+  headingAlongPath,
   initialPlannerState,
+  MIN_HEADING_SEGMENT,
   positionAt,
   step,
   type Plan,
@@ -195,7 +210,7 @@ test('mid-walk retargeting starts at the current point and never crosses a bench
         toKind: lounge.kind,
         toRow: lounge.row,
       },
-    )
+    )!
     const plan: Plan = {
       char: character(`returning/${index}`, 'idle'),
       seat: lounge,
@@ -218,7 +233,7 @@ test('mid-walk retargeting starts at the current point and never crosses a bench
         current.distance,
         { gx: target.gx, gy: target.gy },
         { toKind: 'desk', toRow: target.row },
-      )
+      )!
       assert.ok(route.length >= 2)
       assert.ok(Math.hypot(route[0].gx - current.gx, route[0].gy - current.gy) < 0.02)
       assertNoBenchCrossing(route)
@@ -437,7 +452,7 @@ test('every seat and the door route to every other seat with valid, exact routes
   for (const origin of origins) {
     for (const target of seats) {
       if (origin.seat?.id === target.id) continue
-      const points = buildRoute(origin.point, target, origin.seat)
+      const points = buildRoute(origin.point, target, origin.seat)!
       assertValidRoute(
         points,
         origin.point,
@@ -485,7 +500,7 @@ test('mid-walk retargets keep the exact current point and never cross furniture'
       fromRow: route.fromRow,
       toKind: route.seat.kind,
       toRow: route.seat.row,
-    })
+    })!
     for (const fraction of fractions) {
       const plan: Plan = {
         char: character(`walker/${checked}`, 'idle'),
@@ -503,7 +518,7 @@ test('mid-walk retargets keep the exact current point and never cross furniture'
       const currentPoint = { gx: current.gx, gy: current.gy }
       const ignored = OBSTACLES.filter((box) => inBox(currentPoint, box))
       for (const target of retargets) {
-        const next = buildRoute(currentPoint, target, null)
+        const next = buildRoute(currentPoint, target, null)!
         assertValidRoute(
           next,
           currentPoint,
@@ -633,5 +648,306 @@ test('lane graph edges are clear and use the shared furniture footprints', () =>
       !OBSTACLES.some((box) => inBox(portal, box)),
       `portal for ${seat.id} is in a clear lane`,
     )
+  }
+})
+
+
+test('buildRoute returns blocked for an unreachable target instead of crossing furniture', () => {
+  const insideTable: Seat = { id: 'unreachable-table', gx: 11.0, gy: 6.1, kind: 'cushion', facing: 'right' }
+  const outsideRoom: Seat = { id: 'unreachable-outside', gx: 20, gy: 20, kind: 'standing', facing: 'up' }
+
+  assert.equal(buildRoute(DOOR, insideTable, null), null)
+  assert.equal(buildRoute(DOOR, outsideRoom, null), null)
+})
+
+test('planner holds a character in place instead of adopting an unreachable seat', () => {
+  const target = LOUNGE_SEATS[0]
+  const original = { gx: target.gx, gy: target.gy }
+  try {
+    const working = step(
+      initialPlannerState(),
+      snapshot(
+        [
+          ['a', 'tool'],
+          ['b', 'idle'],
+        ],
+        0,
+      ),
+      0,
+    )
+    const deskPlan = working.plans.get('a')!
+    assert.equal(deskPlan.seat.kind, 'desk')
+    const deskPosition = { gx: deskPlan.seat.gx, gy: deskPlan.seat.gy }
+
+    // Make the lounge seat genuinely unreachable: its coordinates move inside the
+    // coffee table, so the final sit-down leg would have to cross furniture.
+    target.gx = 11.0
+    target.gy = 6.1
+
+    const idle = snapshot(
+      [
+        ['a', 'idle'],
+        ['b', 'idle'],
+      ],
+      1,
+    )
+    const graceStarted = step(working, idle, 1)
+    const afterGrace = step(graceStarted, idle, DESK_GRACE_MS + 2)
+    const held = afterGrace.plans.get('a')!
+
+    assert.notEqual(held.seat.id, target.id, 'must not adopt the unreachable lounge seat')
+    assert.equal(held.seat.id, deskPlan.seat.id, 'stays at the old seat')
+    const at = positionAt(held, DESK_GRACE_MS + 3)
+    assert.equal(at.walking, false)
+    assert.ok(Math.hypot(at.gx - deskPosition.gx, at.gy - deskPosition.gy) < 1e-9)
+    assert.ok(Math.hypot(at.gx - target.gx, at.gy - target.gy) > 1, 'no teleport to the target')
+
+    // A later snapshot retries the move, still without moving or teleporting.
+    const idleRetry = snapshot(
+      [
+        ['a', 'idle'],
+        ['b', 'idle'],
+      ],
+      2,
+    )
+    const retried = step(afterGrace, idleRetry, DESK_GRACE_MS + 4)
+    const stillHeld = retried.plans.get('a')!
+    assert.equal(stillHeld.seat.id, deskPlan.seat.id)
+    const retriedAt = positionAt(stillHeld, DESK_GRACE_MS + 5)
+    assert.ok(Math.hypot(retriedAt.gx - deskPosition.gx, retriedAt.gy - deskPosition.gy) < 1e-9)
+  } finally {
+    target.gx = original.gx
+    target.gy = original.gy
+  }
+})
+
+function assertSpotIsSafe(seat: Seat, margin = SPOT_MARGIN) {
+  assert.ok(seat.gx > 0 && seat.gx < 14, `${seat.id} is inside the room horizontally`)
+  assert.ok(seat.gy > 0 && seat.gy < 10, `${seat.id} is inside the room vertically`)
+  for (const box of OBSTACLES) {
+    assert.equal(
+      inBox({ gx: seat.gx, gy: seat.gy }, { ...box, gx: box.gx - margin, gy: box.gy - margin, w: box.w + margin * 2, d: box.d + margin * 2 }),
+      false,
+      `${seat.id} overlaps furniture at ${box.gx},${box.gy},${box.w},${box.d} with margin ${margin}`,
+    )
+  }
+}
+
+function overflowLoungeSpots(): Seat[] {
+  const spots: Seat[] = []
+  for (let i = 0; i < MAX_LOUNGE_SPOTS; i++) spots.push(loungeSeatFor(LOUNGE_SEATS.length + i))
+  for (let i = 0; i < 5; i++) spots.push(loungeSeatFor(LOUNGE_SEATS.length + MAX_LOUNGE_SPOTS + i))
+  return spots
+}
+
+function overflowStandingSpots(): Seat[] {
+  const spots: Seat[] = []
+  for (let i = 0; i < MAX_STANDING_SPOTS; i++) spots.push(standingSeatFor(i))
+  for (let i = 0; i < 5; i++) spots.push(standingSeatFor(MAX_STANDING_SPOTS + i))
+  return spots
+}
+
+test('overflow lounge and standing spots are clear, bounded, reachable and routable', () => {
+  assert.ok(MAX_LOUNGE_SPOTS > 0)
+  assert.ok(MAX_STANDING_SPOTS >= 9, 'the 40-character / 25-working roster has nine standers')
+  assert.equal(LOUNGE_CAPACITY, LOUNGE_SEATS.length + MAX_LOUNGE_SPOTS + LOUNGE_CROWD_SPOTS.length)
+  assert.equal(STANDING_CAPACITY, MAX_STANDING_SPOTS + STANDING_CROWD_SPOTS.length)
+  assert.ok(LOUNGE_CROWD_SPOTS.length > 0)
+  assert.ok(STANDING_CROWD_SPOTS.length > 0)
+
+  const targets: Seat[] = [...DESK_SEATS, ...LOUNGE_SEATS]
+  for (const spot of [...overflowLoungeSpots(), ...overflowStandingSpots()]) {
+    assertSpotIsSafe(spot)
+    assert.ok(portalForSeat(spot), `${spot.id} has a portal`)
+    const approach = buildRoute(DOOR, spot, null)
+    assert.ok(approach, `${spot.id} is reachable from the door`)
+    assertValidRoute(approach!, DOOR, spot)
+
+    for (const target of targets) {
+      const fromSpot = buildRoute(spot, target, spot)
+      assert.ok(fromSpot, `${spot.id} can route to ${target.id}`)
+      assertValidRoute(fromSpot!, spot, target)
+    }
+
+    const toLounge = buildRoute(spot, LOUNGE_SEATS[0], spot)
+    assert.ok(toLounge)
+  }
+})
+
+test('mid-walk retargets to and from overflow spots are valid and do not teleport', () => {
+  const desk = DESK_SEATS[7]
+  const lounge = LOUNGE_SEATS[0]
+  const seed = buildPath(
+    { gx: desk.gx, gy: desk.gy },
+    { gx: lounge.gx, gy: lounge.gy },
+    { fromKind: 'desk', fromRow: desk.row, toKind: lounge.kind, toRow: lounge.row },
+  )!
+  const plan: Plan = {
+    char: character('walker/overflow', 'idle'),
+    seat: lounge,
+    deskIndex: null,
+    path: seed,
+    walkStart: 0,
+    walkDuration: 6000,
+    enteredAt: 0,
+    isNew: false,
+  }
+
+  const targets = [...overflowLoungeSpots().slice(0, 8), ...overflowStandingSpots().slice(0, 8)]
+  for (const fraction of [0.15, 0.45, 0.8]) {
+    const current = positionAt(plan, fraction * plan.walkDuration)
+    const point = { gx: current.gx, gy: current.gy }
+    for (const target of targets) {
+      const route = buildRetargetPath(plan.path, point, current.distance, target, {
+        toKind: target.kind,
+        toRow: target.row,
+      })
+      assert.ok(route)
+      assertValidRoute(route!, point, target)
+    }
+  }
+
+  for (const spot of targets) {
+    const route = buildRoute(spot, desk, spot)
+    assert.ok(route)
+    const fromSpot: Plan = {
+      char: character('walker/back', 'idle'),
+      seat: desk,
+      deskIndex: null,
+      path: route!,
+      walkStart: 0,
+      walkDuration: 6000,
+      enteredAt: 0,
+      isNew: false,
+    }
+    const current = positionAt(fromSpot, 2400)
+    assert.equal(current.walking, true)
+    const retarget = buildRetargetPath(
+      fromSpot.path,
+      { gx: current.gx, gy: current.gy },
+      current.distance,
+      lounge,
+      { toKind: lounge.kind, toRow: lounge.row },
+    )
+    assert.ok(retarget)
+    assertValidRoute(retarget!, { gx: current.gx, gy: current.gy }, lounge)
+  }
+})
+
+test('fixed-seat routes are smooth, short and have at most four heading changes', () => {
+  const seats = [...DESK_SEATS, ...LOUNGE_SEATS]
+  const origins: Array<{ point: { gx: number; gy: number }; seat: Seat | null; id: string }> = [
+    ...seats.map((seat) => ({ point: { gx: seat.gx, gy: seat.gy }, seat, id: seat.id })),
+    { point: DOOR, seat: null, id: 'door' },
+  ]
+
+  for (const origin of origins) {
+    for (const target of seats) {
+      if (origin.seat?.id === target.id) continue
+      const points = buildRoute(origin.point, target, origin.seat)
+      assert.ok(points, `${origin.id} -> ${target.id} is routable`)
+      assert.ok(points!.length <= 8, `${origin.id} -> ${target.id} has ${points!.length} points`)
+
+      const portal = portalForSeat(target)
+      const portalIndex = points!.findIndex(
+        (point) => Math.abs(point.gx - portal.gx) < 1e-6 && Math.abs(point.gy - portal.gy) < 1e-6,
+      )
+      const stop = portalIndex >= 0 ? portalIndex : points!.length - 2
+      for (let i = 1; i <= stop; i++) {
+        const leg = Math.hypot(
+          points![i].gx - points![i - 1].gx,
+          points![i].gy - points![i - 1].gy,
+        )
+        assert.ok(
+          leg >= MIN_HEADING_SEGMENT - 1e-9,
+          `${origin.id} -> ${target.id} has a ${leg.toFixed(3)}-tile leg before the sit-down`,
+        )
+      }
+
+      const total = pathLength(points!)
+      let last = headingAlongPath(points!, 0)
+      let changes = 0
+      for (let d = 0; d <= total; d += 0.05) {
+        const heading = headingAlongPath(points!, Math.min(total, d))
+        if (heading !== last) {
+          changes += 1
+          last = heading
+        }
+      }
+      assert.ok(
+        changes <= 4,
+        `${origin.id} -> ${target.id} changes heading ${changes} times`,
+      )
+    }
+  }
+})
+
+test('render geometry and routing footprints share their spec objects and cover drawn extents', () => {
+  assert.equal(FURNITURE_FOOTPRINTS.monitors, DESK_MONITOR_BOXES)
+  assert.equal(FURNITURE_FOOTPRINTS.chairs, DESK_CHAIR_BOXES)
+  assert.equal(FURNITURE_FOOTPRINTS.plantSpecs, PLANT_SPECS)
+  assert.equal(FURNITURE_FOOTPRINTS.plants.length, PLANT_SPECS.length)
+  FURNITURE_FOOTPRINTS.plants.forEach((box, index) => {
+    assert.equal(box, PLANT_SPECS[index].box)
+  })
+
+  DESK_SEATS.forEach((seat, index) => {
+    const monitor = DESK_MONITOR_BOXES[index]
+    const chair = DESK_CHAIR_BOXES[index]
+    assert.ok(OBSTACLES.includes(monitor))
+    assert.ok(OBSTACLES.includes(chair))
+    assert.ok(monitor.d >= 0.68, 'monitor footprint includes the keyboard')
+    assert.ok(monitor.gx <= seat.gx - 0.32 && monitor.gx + monitor.w >= seat.gx + 0.32)
+    assert.ok(monitor.gy + monitor.d >= monitor.gy + 0.48 + 0.2 - 1e-9)
+  })
+
+  for (const spec of PLANT_SPECS) {
+    assert.ok(OBSTACLES.includes(spec.box))
+    assert.ok(Math.abs(spec.box.w - 0.48 * spec.scale) < 1e-9)
+    assert.ok(Math.abs(spec.box.d - 0.48 * spec.scale) < 1e-9)
+  }
+
+  for (const armchair of [FURNITURE_FOOTPRINTS.armchairNorth, FURNITURE_FOOTPRINTS.armchairSouth]) {
+    assert.ok(OBSTACLES.includes(armchair))
+    assert.ok(armchair.w >= 1.0 && armchair.d >= 0.86)
+  }
+})
+
+test('large roster: 40 characters, 25 working, all valid, separated and out of furniture', () => {
+  const entries: Array<[string, ActivityStatus]> = Array.from({ length: 40 }, (_, i) => [
+    `roster/m${i}`,
+    i < 25 ? 'tool' : 'idle',
+  ])
+  const state = step(initialPlannerState(), snapshot(entries, 0), 0)
+  assert.equal(state.plans.size, 40)
+
+  const positions = [...state.plans.values()].map((plan) => {
+    const at = positionAt(plan, 0)
+    assert.equal(at.walking, false)
+    assert.ok(at.gx > 0 && at.gx < 14 && at.gy > 0 && at.gy < 10, `${plan.char.id} is in the room`)
+    return { id: plan.char.id, gx: at.gx, gy: at.gy, seat: plan.seat }
+  })
+
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      const a = positions[i]
+      const b = positions[j]
+      assert.ok(
+        Math.hypot(a.gx - b.gx, a.gy - b.gy) >= 0.3,
+        `${a.id} and ${b.id} are too close at rest`,
+      )
+    }
+  }
+
+  for (const position of positions) {
+    if (position.seat.kind === 'standing' || position.seat.id.startsWith('lx') || position.seat.id.startsWith('lc')) {
+      for (const box of OBSTACLES) {
+        assert.equal(
+          inBox({ gx: position.gx, gy: position.gy }, box),
+          false,
+          `${position.id} overlaps furniture`,
+        )
+      }
+    }
   }
 })
