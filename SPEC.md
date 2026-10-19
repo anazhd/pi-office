@@ -122,7 +122,7 @@ only, tolerate missing/invalid) and `~/.pi/agent/models.json` similarly. Fallbac
 
 - `GET /api/office` → `OfficeSnapshot` JSON.
 - `GET /api/stream` → SSE. On connect and whenever the snapshot changes (compare a cheap JSON hash), send
-  `event: snapshot\ndata: <OfficeSnapshot JSON>\n\n`. Heartbeat comment `: ping` every 25s. Clean up on close.
+  `event: snapshot\ndata: <OfficeSnapshot JSON>\n\n`. Named `heartbeat` event with a millisecond timestamp every 25s (observable by EventSource). Clean up on close.
   Headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`.
 - `GET /api/health` → `{ok:true}`.
 - Everything else: static from `dist/` (correct content types, `index.html` fallback for non-file paths, no
@@ -169,7 +169,8 @@ HUD (NativeWind, overlay, mobile-friendly, dark glassy cards):
 
 Client data: `useOffice()` loads `GET /api/office`, then subscribes to `/api/stream` via `EventSource` when
 available (web); otherwise polls every 3s (native). API base = `process.env.EXPO_PUBLIC_OFFICE_API ?? ''`
-(same origin on web). Reconnect with backoff. Characters animate between states client-side; the server only
+(same origin on web). Reconnect with backoff; recover silent streams after 45s without a snapshot/heartbeat and refetch/reconnect
+on visible-tab resume, focus or online. Characters animate between states client-side; the server only
 sends state.
 
 ## Quality bar

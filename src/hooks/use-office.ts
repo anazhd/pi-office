@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { watchStream } from './stream-watchdog'
 import { apiUrl, fetchOffice, parseSnapshot, USE_MOCK } from '@/api/client'
 import type { OfficeSnapshot } from '@/api/types'
 
@@ -141,9 +142,15 @@ export function useOffice(): OfficeState {
         return
       }
 
+      const current = source
+      source.addEventListener('heartbeat', () => {
+        if (!cancelled && source === current) watchdog.touch()
+      })
       source.addEventListener('snapshot', (event) => {
+        if (cancelled || source !== current) return
         const next = parseSnapshot((event as MessageEvent<string>).data)
         if (!next) return
+        watchdog.touch()
         backoff = 1000
         sseLive = true
         abortInflight()
@@ -153,7 +160,8 @@ export function useOffice(): OfficeState {
       })
 
       source.addEventListener('open', () => {
-        if (cancelled) return
+        if (cancelled || source !== current) return
+        watchdog.touch()
         backoff = 1000
         sseLive = true
         abortInflight()
@@ -162,6 +170,7 @@ export function useOffice(): OfficeState {
       })
 
       source.addEventListener('error', () => {
+        if (cancelled || source !== current) return
         source?.close()
         source = null
         if (cancelled) return
@@ -172,10 +181,24 @@ export function useOffice(): OfficeState {
       })
     }
 
+    const watchdog = watchStream(() => {
+      source?.close()
+      source = null
+      sseLive = false
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      reconnectTimer = null
+      abortInflight()
+      setConnection('connecting')
+      connect()
+      startPolling(FALLBACK_POLL_MS)
+      void load()
+    }, typeof document === 'undefined' ? null : document,
+    typeof window === 'undefined' ? null : window)
     connect()
 
     return () => {
       cancelled = true
+      watchdog.stop()
       source?.close()
       source = null
       if (reconnectTimer) clearTimeout(reconnectTimer)

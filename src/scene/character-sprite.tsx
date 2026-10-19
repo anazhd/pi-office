@@ -13,6 +13,7 @@ type Props = {
   selected: boolean
   dense: boolean
   onSelect: (id: string) => void
+  tagName?: string
 }
 
 const CONFETTI = ['#E9A94C', '#63B9A8', '#D97757', '#F4EDE0', '#8DA37E']
@@ -118,6 +119,7 @@ export function CharacterTag({
   selected,
   dense,
   onSelect,
+  tagName,
 }: Props) {
   const { char, gx, gy } = scene
   const look = lookFor(char)
@@ -125,7 +127,7 @@ export function CharacterTag({
   return (
     <G onPress={() => onSelect(char.id)} transform={`translate(${x} ${y})`}>
       <G transform={`translate(0 ${nameTagTop(scene)})`}>
-        <NameTag look={look} char={char} selected={selected} dense={dense} />
+        <NameTag look={look} char={char} selected={selected} name={tagName ?? char.displayName} />
       </G>
     </G>
   )
@@ -135,15 +137,13 @@ function NameTag({
   look,
   char,
   selected,
-  dense,
+  name,
 }: {
   look: Look
   char: SceneCharacter['char']
   selected: boolean
-  dense: boolean
+  name: string
 }) {
-  const full = selected || char.status !== 'idle' || !dense
-  const name = full ? char.displayName : char.displayName.split(' ')[0]
   const width = Math.max(30, name.length * 3.7 + 11)
   return (
     <G>

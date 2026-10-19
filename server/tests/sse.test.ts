@@ -71,6 +71,16 @@ test('snapshot hash ignores the clock', () => {
   assert.notEqual(snapshotHash(snapshot(1)), snapshotHash(snapshot(1, 5)))
 })
 
+test('sse: idle heartbeat is observable by EventSource and carries a clock', t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1000 })
+  const hub = new SseHub()
+  const res = fakeRes()
+  hub.add(fakeReq(), res, snapshot(1000))
+  t.mock.timers.tick(25_000)
+  assert.equal(res.written.at(-1), 'event: heartbeat\ndata: 26000\n\n')
+  hub.closeAll()
+})
+
 test('sse: caps concurrent clients', () => {
   const hub = new SseHub({ maxClients: 1 })
   assert.equal(hub.add(fakeReq(), fakeRes(), snapshot(1)), true)

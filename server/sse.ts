@@ -98,7 +98,7 @@ export class SseHub {
     res.write('retry: 3000\n\n')
 
     this.clients.add(client)
-    client.heartbeat = setInterval(() => this.send(client, ': ping\n\n'), this.heartbeatMs)
+    client.heartbeat = setInterval(() => this.send(client, `event: heartbeat\ndata: ${Date.now()}\n\n`), this.heartbeatMs)
     client.heartbeat.unref()
     this.send(client, sseFrame(snapshot))
     return true

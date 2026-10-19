@@ -41,6 +41,8 @@ export type PlannerState = {
   /** Every character ever seen, so a returning character is not a "new hire". */
   seen: Set<string>
   loaded: boolean
+  /** Bounded clock-based retry after a blocked route, even without server changes. */
+  retryAt: number | null
   lastSnapshot: OfficeSnapshot | null
 }
 
@@ -72,6 +74,7 @@ export function initialPlannerState(): PlannerState {
     graceUntil: new Map(),
     seen: new Set(),
     loaded: false,
+    retryAt: null,
     lastSnapshot: null,
   }
 }
@@ -214,7 +217,8 @@ export function step(
   // Fast path for ticks between snapshots: plans only change on a server push or when a
   // desk grace window expires on the clock.
   if (prev.loaded && snapshot === prev.lastSnapshot) {
-    let expired = false
+    if (prev.retryAt != null && now < prev.retryAt) return prev
+    let expired = prev.retryAt != null && now >= prev.retryAt
     for (const expiry of prev.graceUntil.values()) {
       if (now >= expiry) {
         expired = true
@@ -224,6 +228,7 @@ export function step(
     if (!expired) return prev
   }
 
+  let retryAt: number | null = null
   const firstRender = !prev.loaded
   const desks = new Map(prev.desks)
   const lounges = new Map(prev.lounges)
@@ -336,8 +341,9 @@ export function step(
             )
 
         if (route == null) {
+          retryAt = now + 1000
           // No verified route. Hold the character where it is (or at its old seat) and do
-          // not adopt the unreachable target; a later snapshot retries the move.
+          // not adopt the unreachable target; the clock retries without a new snapshot.
           plannedDeskIndex = previous.deskIndex
           if (current.walking) {
             plannedSeat = {
@@ -381,6 +387,7 @@ export function step(
         toRow: seat.row,
       })
       if (route == null) {
+        retryAt = now + 1000
         plannedSeat = {
           ...seat,
           id: `hold-${char.id}`,
@@ -432,6 +439,7 @@ export function step(
     graceUntil: grace,
     seen,
     loaded: true,
+    retryAt,
     lastSnapshot: snapshot,
   }
 }

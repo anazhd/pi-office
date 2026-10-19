@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { shortTagName } from './short-tag-name'
 import { G, Svg } from 'react-native-svg'
 import type { OfficeSnapshot } from '@/api/types'
 import { Backdrop } from './backdrop'
@@ -82,6 +83,7 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
       {characters.map((scene) => (
         <CharacterTag
           key={`tag-${scene.char.id}`}
+          tagName={shortTagName(scene.char, snapshot?.characters)}
           scene={scene}
           now={now}
           selected={selectedId === scene.char.id}
