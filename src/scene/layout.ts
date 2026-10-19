@@ -28,8 +28,8 @@ export type SeatedFacing = 'west' | 'east' | 'north' | 'south'
 export const LOUNGE_FACING: Readonly<Record<string, SeatedFacing>> = {
   l1: 'east', l2: 'east', l3: 'east',
   l4: 'west', l5: 'west',
-  l6: 'north', l7: 'north', l8: 'west', l9: 'west',
-  l10: 'south', l11: 'north',
+  l6: 'east', l7: 'west', l8: 'east', l9: 'west',
+  l10: 'south', l11: 'south',
   l12: 'south', l13: 'north',
   l14: 'east', l15: 'north', l16: 'north',
 }
