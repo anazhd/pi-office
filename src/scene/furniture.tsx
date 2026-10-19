@@ -11,7 +11,7 @@ import {
 import { iso, isoPoints, floorPolygon, hashIndex, TILE_H, TILE_W } from './iso'
 import { DESK_BENCHES, DESK_SEATS, type Seat } from './layout'
 import { FURNITURE_FOOTPRINTS, type Box } from './footprints'
-import { FURNITURE_BOUNDS, SOFA_SEGMENTS, SOFA_ARM_D } from './furniture-bounds'
+import { armchairFrontBox, FURNITURE_BOUNDS, SOFA_SEGMENTS, SOFA_ARM_D } from './furniture-bounds'
 import type { SceneItem } from './types'
 
 type BoxColors = { top: string; left: string; right: string }
@@ -136,8 +136,10 @@ export function buildFurniture(
   const southOttoman = FURNITURE_FOOTPRINTS.ottomanSouth
 
   add('armchair-1', <ArmchairBase box={northArm} />)
+  add('armchair-1-front', <ArmchairFront box={northArm} />)
   add('armchair-1-back', <ArmchairBack box={northArm} />)
   add('armchair-2', <ArmchairBase box={southArm} />)
+  add('armchair-2-front', <ArmchairFront box={southArm} />)
   add('armchair-2-back', <ArmchairBack box={southArm} />)
   add('coffee-table', <CoffeeTable now={now} />)
   add('ottoman-1', <Ottoman gy={northOttoman.gy} />)
@@ -687,17 +689,15 @@ function ArmchairBase({ box }: { box: Box }) {
         h={5}
         colors={{ top: '#C47D5C', left: '#A06045', right: '#854B34' }}
       />
-      <Box
-        gx={gx}
-        gy={gy + d - 0.15}
-        w={w - 0.12}
-        d={0.15}
-        z0={20}
-        h={22}
-        colors={{ top: '#B26C4E', left: '#8D543D', right: '#71432F' }}
-      />
+
     </G>
   )
+}
+
+/** Camera-side arm: a solid slab, painted over the occupant, not over the open west edge. */
+function ArmchairFront({ box }: { box: Box }) {
+  return <Box {...armchairFrontBox(box)}
+    z0={20} h={22} colors={{ top: '#B26C4E', left: '#8D543D', right: '#71432F' }} />
 }
 
 function ArmchairBack({ box }: { box: Box }) {
