@@ -1,5 +1,5 @@
 import { Circle, Ellipse, G, Line, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg'
-import type { Seat, SeatKind } from './layout'
+import { seatedFacing, type Seat, type SeatKind } from './layout'
 import type { Heading, SceneCharacter } from './use-scene-model'
 import { hashIndex, iso } from './iso'
 import { lookFor, shade, type Look } from './palette'
@@ -21,7 +21,6 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
   const { x, y } = iso(gx, gy)
   const phase = now / 1000
   const offset = hashIndex(char.id, 11, 1000) / 90
-  const seatedLow = scene.seat.kind === 'beanbag' || scene.seat.kind === 'cushion'
 
   const walking = pose === 'walking'
   const waiting = pose === 'waiting'
@@ -47,8 +46,6 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
   const sip = !walking && !typing && !relaxing && sipPhase < 1.3 ? Math.sin((sipPhase / 1.3) * Math.PI) : 0
 
   const steamT = (phase * 0.45 + offset * 0.1) % 1
-  const mugX = typing ? 0 : 12
-  const mugY = typing ? -20 : seatedLow ? -22 : -26
 
   const label = `${char.displayName}, ${char.title}, level ${char.level}. Open details.`
 
@@ -85,21 +82,17 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
           />
         ) : (
           <SeatedBody
+            seat={scene.seat}
             look={look}
             typing={typing}
             relaxing={relaxing}
             chair={chair}
-            low={seatedLow}
-            seatedOnWindow={scene.seat.kind === 'window'}
             bob={bob}
             typeBeat={typeBeat}
             sip={sip}
-            mugX={mugX}
-            mugY={mugY}
             steamT={steamT}
             phase={phase}
             offset={offset}
-            prop={look.loungeProp}
           />
         )}
 
@@ -301,43 +294,30 @@ function WalkingBody({
 }
 
 function SeatedBody({
+  seat,
   look,
   typing,
   relaxing,
   chair,
-  low,
-  seatedOnWindow,
   bob,
   typeBeat,
   sip,
-  mugX,
-  mugY,
   steamT,
   phase,
   offset,
-  prop,
 }: {
+  seat: Seat
   look: Look
   typing: boolean
-  low: boolean
-  seatedOnWindow: boolean
   bob: number
   typeBeat: number
   sip: number
-  mugX: number
-  mugY: number
   steamT: number
   phase: number
   offset: number
-  prop: number
   relaxing: boolean
   chair: { top: string; left: string; right: string }
 }) {
-  const drop = low ? 7 : 0
-  const torsoTop = low ? -33 : -39
-  const headY = (low ? -41 : -48) + bob
-  const shirtH = low ? 20 : 24
-
   if (typing || relaxing) {
     return (
       <DeskBody
@@ -352,103 +332,80 @@ function SeatedBody({
     )
   }
 
+  return <LoungeBody seat={seat} look={look} bob={bob} sip={sip} steamT={steamT} />
+}
+
+/** Side silhouette in local forward coordinates; mirroring never turns a frontal face sideways. */
+function LoungeBody({ seat, look, bob, sip, steamT }: {
+  seat: Seat; look: Look; bob: number; sip: number; steamT: number
+}) {
+  const facing = seatedFacing(seat)
+  const back = facing === 'west' || facing === 'north'
+  const left = facing === 'west' || facing === 'south'
+  const low = seat.kind === 'beanbag' || seat.kind === 'cushion'
+  // Hip rests at the actual cushion height, not in front of the furniture.
+  const hip = seat.kind === 'sofa' || seat.kind === 'armchair' ? -25
+    : seat.id === 'l14' ? -27 : seat.kind === 'window' ? -23
+    : seat.kind === 'ottoman' ? -19 : seat.kind === 'beanbag' ? -13 : -6
+  const head = hip - 26
+  const forwardY = back ? -8 : 8
+  const mugX = 15 - sip * 3
+  const mugY = hip - 8 - sip * 12
   return (
-    <G transform={`translate(0 ${drop + bob})`}>
-      {seatedOnWindow ? (
-        <G>
-          <Rect x={-9} y={-15} width={7} height={15} rx={3.5} fill={look.pants} />
-          <Rect x={2} y={-15} width={7} height={15} rx={3.5} fill={look.pants} />
-          <Rect x={-10.5} y={-3} width={8} height={4} rx={2} fill="#2E2924" />
-          <Rect x={2.5} y={-3} width={8} height={4} rx={2} fill="#2E2924" />
+    <G transform={`scale(${left ? -1 : 1} 1)`}>
+      {/* Far thigh, bent knee and planted shoe extend toward the table. */}
+      <Path d={`M -2 ${hip} L 13 ${hip + forwardY * 0.65} L 17 ${forwardY - 1}`}
+        fill="none" stroke={shade(look.pants, -15)} strokeWidth={6} strokeLinecap="round" />
+      <Ellipse cx={20} cy={forwardY} rx={6} ry={2.8} fill="#26231F" />
+      <Path d={`M -7 ${hip + 2} Q 0 ${hip + 7} 10 ${hip + forwardY + 3} L ${low ? 12 : 14} ${forwardY + 5}`}
+        fill="none" stroke={look.pants} strokeWidth={7} strokeLinecap="round" />
+      <Ellipse cx={17} cy={forwardY + 6} rx={6.5} ry={3} fill="#302A25" />
+      <G transform={`translate(0 ${bob * 0.5})`}>
+        <Path d={`M -10 ${hip} L -11 ${hip - 14} Q -9 ${hip - 21} -2 ${hip - 21} L 5 ${hip - 19} Q 9 ${hip - 13} 7 ${hip + 1} Q -2 ${hip + 4} -10 ${hip} Z`}
+          fill={back ? look.shirtBack : look.shirt} />
+        <Path d={`M -9 ${hip - 17} Q -7 ${hip - 8} -7 ${hip}`} stroke={look.shirtDark} strokeWidth={2} fill="none" />
+        {!back ? <Path d={`M 4 ${hip - 17} L 7 ${hip - 10} L 3 ${hip - 9} L 1 ${hip - 16} Z`} fill="#F4EDE0" opacity={0.75} /> : null}
+        {look.loungeProp === 2 ? <>
+          <Path d={`M 3 ${hip - 16} Q 8 ${hip - 9} ${mugX} ${mugY + 3}`} fill="none" stroke={look.shirt} strokeWidth={5} strokeLinecap="round" />
+          <Circle cx={mugX} cy={mugY + 3} r={2.6} fill={look.skin} />
+        </> : null}
+        <Rect x={-2} y={head + 6} width={6} height={8} rx={2} fill={look.skin} />
+        {look.accessory === 4 ? <Path d={`M -7 ${head + 10} Q 0 ${head + 15} 6 ${head + 10}`} stroke={look.shirtDark} strokeWidth={3} fill="none" /> : null}
+        {/* A single forward eye/nose plane; rear three-quarter views show mostly hair. */}
+        <G transform={`translate(0 ${head})`}>
+          <Path d="M -9 -4 Q -6 -14 3 -10 Q 10 -8 9 -1 L 13 3 L 9 5 Q 8 12 2 12 L -5 8 Z" fill={look.skin} />
+          <G transform={back ? 'translate(2 0) scale(0.86 1)' : 'translate(-3 0) scale(0.65 1)'}>
+            <BackHair look={look} cy={0} />
+          </G>
+          <Ellipse cx={back ? 6 : -1} cy={4} rx={2.6} ry={3.3} fill={look.skin} />
+          <Path d={`M ${back ? 6 : -1} 3 q -2 0 -1 3`} stroke={shade(look.skin, -30)} strokeWidth={0.8} fill="none" />
+          {!back ? <>
+            <Circle cx={8} cy={1} r={1.1} fill="#30241C" />
+            <Path d="M 9 7 l -3 1" stroke="#805343" strokeWidth={0.8} />
+          </> : <Path d="M 10 1 l 1 1" stroke="#30241C" strokeWidth={1} />}
+          {look.accessory === 1 ? <Path d="M 1 0 L 7 -1 L 11 1 L 10 5 L 6 5 L 5 0" stroke="#332D29" strokeWidth={1.2} fill="none" /> : null}
+          {look.accessory === 2 ? <>
+            <Path d="M -8 0 Q -9 -14 3 -12 Q 8 -10 8 -5" stroke="#302B27" strokeWidth={2} fill="none" />
+            <Rect x={back ? 4 : -4} y={0} width={5} height={7} rx={2} fill="#302B27" />
+          </> : null}
+          {look.accessory === 3 ? <Circle cx={back ? 7 : 0} cy={7} r={1.4} fill="#E9A94C" /> : null}
         </G>
-      ) : low ? (
-        <G>
-          <Path
-            d="M -11 -10 Q -12 -3 0 -4 Q 12 -3 11 -10"
-            stroke={look.pants}
-            strokeWidth={7}
-            strokeLinecap="round"
-            fill="none"
-          />
-          <Ellipse cx={-8} cy={-3.5} rx={5} ry={3.2} fill="#2E2924" />
-          <Ellipse cx={8} cy={-3.5} rx={5} ry={3.2} fill="#2E2924" />
-          <Path d="M -9 -8 Q 0 -12 9 -8" stroke={look.pants} strokeWidth={6} strokeLinecap="round" />
-        </G>
-      ) : (
-        <G>
-          <Path
-            d="M -7 -17 L -7 -6 L -4 -3"
-            stroke={look.pants}
-            strokeWidth={7}
-            strokeLinecap="round"
-            fill="none"
-          />
-          <Path
-            d="M 7 -17 L 7 -6 L 4 -3"
-            stroke={look.pants}
-            strokeWidth={7}
-            strokeLinecap="round"
-            fill="none"
-          />
-          <Ellipse cx={-4} cy={-2.4} rx={4.6} ry={3} fill="#2E2924" />
-          <Ellipse cx={4} cy={-2.4} rx={4.6} ry={3} fill="#2E2924" />
-        </G>
-      )}
-
-      {prop === 2 ? (
-        <G transform="rotate(-6 0 -18)">
-          <Rect x={-9} y={-20} width={18} height={12} rx={1.5} fill="#F0E4CF" />
-          <Rect x={-9} y={-20} width={18} height={3} rx={1.5} fill="#D9C7A8" />
-          <Line x1={-6} y1={-14} x2={4} y2={-14} stroke="#A99677" strokeWidth={1} />
-        </G>
-      ) : null}
-
-      <Rect x={-11} y={torsoTop} width={22} height={shirtH} rx={7.5} fill={look.shirt} />
-      <Path
-        d={`M -9 ${torsoTop + 2} Q 0 ${torsoTop + 9} 9 ${torsoTop + 2}`}
-        stroke={look.shirtDark}
-        strokeWidth={2}
-        fill="none"
-      />
-      <Rect x={-5} y={torsoTop + 5} width={10} height={7.5} rx={2} fill="#F4EDE0" opacity={0.88} />
-      <Rect
-        x={-3.2}
-        y={torsoTop + 6.9}
-        width={6.4}
-        height={1.3}
-        rx={0.65}
-        fill={look.shirtDark}
-        opacity={0.55}
-      />
-      <Rect
-        x={-3.2}
-        y={torsoTop + 9.2}
-        width={4.4}
-        height={1.1}
-        rx={0.55}
-        fill={look.shirtDark}
-        opacity={0.35}
-      />
-
-      <G transform={`rotate(${-sip * 8} 11 ${torsoTop + 3}) translate(${-sip * 3} ${-sip * 12})`}>
-        <Rect x={8.6} y={-26} width={5} height={13} rx={2.5} fill={look.shirtDark} />
-        <Circle cx={11} cy={-12} r={3.2} fill={look.skin} />
-        <G transform={`translate(${mugX - 11} ${mugY + 12})`}>
+        {look.loungeProp === 2 ? <G>
+          <Path d={`M 7 ${hip - 6} L 19 ${hip - 12} L 25 ${hip - 4} L 12 ${hip + 1} Z`} fill="#EDE1CA" stroke="#AD9776" strokeWidth={0.8} />
+          <Path d={`M 11 ${hip - 5} L 19 ${hip - 8} M 13 ${hip - 2} L 21 ${hip - 5}`} stroke="#AD9776" strokeWidth={0.8} />
+        </G> : null}
+        <Path d={`M -4 ${hip - 16} Q -5 ${hip - 5} 4 ${hip - 6} L ${look.loungeProp === 2 ? 17 : mugX} ${look.loungeProp === 2 ? hip - 5 : mugY + 4}`}
+          fill="none" stroke={look.shirtDark} strokeWidth={5.5} strokeLinecap="round" />
+        <Circle cx={look.loungeProp === 2 ? 17 : mugX} cy={look.loungeProp === 2 ? hip - 5 : mugY + 4} r={2.8} fill={look.skin} />
+        <G transform={`translate(${mugX} ${mugY})`}>
           <Mug look={look} />
-          {prop === 1 ? (
-            <G transform="translate(9 -1) rotate(10)">
-              <Rect x={0} y={0} width={7} height={11} rx={1.8} fill="#26221E" />
-              <Rect x={1.3} y={1.5} width={4.4} height={7} rx={0.8} fill="#8FB9C9" opacity={0.8} />
-            </G>
-          ) : null}
+          <Steam x={1} y={-3} t={steamT} opacity={0.34} />
+          {look.loungeProp === 1 ? <G transform="translate(-3 5) rotate(-18)">
+            <Rect width={6} height={10} rx={1} fill="#292620" />
+            <Rect x={1} y={1} width={4} height={7} fill="#8FB9C9" />
+          </G> : null}
         </G>
-        <Steam x={mugX + 1} y={mugY - 3} t={steamT} opacity={0.34} />
       </G>
-
-      <Rect x={-11} y={-31} width={5.4} height={12} rx={2.7} fill={look.shirtDark} />
-      <Circle cx={-8.2} cy={-18} r={3} fill={look.skin} />
-
-      <Head look={look} typing={false} sip={sip} phase={phase} headY={headY} offset={offset} />
     </G>
   )
 }

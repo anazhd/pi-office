@@ -42,6 +42,14 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
     // always draws after.
     const own = new Set(furnitureContaining(scene.gx, scene.gy))
     if (!scene.walking) for (const key of seatFurnitureKeys(scene.seat, scene.deskIndex)) own.add(key)
+    // West-facing armchairs have their +gx back on the camera side. It must cover
+    // the lower back of its occupant, rather than painting the person over the slab.
+    if (!scene.walking && scene.seat.kind === 'armchair') {
+      const backKey = scene.seat.id === 'l4' ? 'armchair-1-back' : 'armchair-2-back'
+      own.delete(backKey)
+      const back = items.find((item) => item.key === backKey)
+      if (back) back.after = [...(back.after ?? []), `char-${scene.char.id}`]
+    }
     const bounds = characterBounds(scene)
     items.push({
       key: `char-${scene.char.id}`,

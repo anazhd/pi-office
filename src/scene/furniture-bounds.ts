@@ -11,8 +11,8 @@ export const SOFA_SEGMENTS = 3
 export const SOFA_ARM_D = 0.22
 export const BENCH_TOP_Z = 33.5
 export const CHAIR_TOP_Z = 31
-/** Character sprites are ~64 px tall from the feet; seated desk workers reach ~74 with the head. */
-export const CHARACTER_HEIGHT = 64
+/** Seated side-view heads reach 72 px above the floor (including the raised cushion). */
+export const CHARACTER_HEIGHT = 74
 export const DESK_WORKER_HEIGHT = 74
 
 export type BoundedKey = { key: string; bounds: Bounds3 }
