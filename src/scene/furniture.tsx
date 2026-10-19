@@ -7,12 +7,11 @@ import {
   Path,
   Polygon,
   Rect,
-  Text as SvgText,
 } from 'react-native-svg'
 import { iso, isoPoints, floorPolygon, hashIndex, TILE_H, TILE_W } from './iso'
 import { DESK_BENCHES, DESK_SEATS, type Seat } from './layout'
 import { FURNITURE_FOOTPRINTS, type Box } from './footprints'
-import { FURNITURE_BOUNDS, SOFA_SEGMENTS } from './furniture-bounds'
+import { FURNITURE_BOUNDS, SOFA_SEGMENTS, SOFA_ARM_D } from './furniture-bounds'
 import type { SceneItem } from './types'
 
 type BoxColors = { top: string; left: string; right: string }
@@ -156,7 +155,9 @@ export function buildFurniture(
   FURNITURE_FOOTPRINTS.cushions.forEach((cushion, i) => {
     add(
       `cushion-${i + 1}`,
-      <Cushion gx={cushion.gx + cushion.w / 2} gy={cushion.gy + cushion.d / 2} />,
+      <G transform={i === 0 ? 'translate(0 -20.5)' : undefined}>
+        <Cushion gx={cushion.gx + cushion.w / 2} gy={cushion.gy + cushion.d / 2} />
+      </G>,
     )
   })
 
@@ -573,11 +574,33 @@ function DeskChair({ seat, index, occupied }: { seat: Seat; index: number; occup
   )
 }
 
+/** Corner posts are painted rear-to-front, then capped by the slab. */
+function Legs({ box, height, colors = WOOD }: { box: Box; height: number; colors?: BoxColors }) {
+  const { gx, gy, w, d } = box
+  return <G>{[[0.07, 0.07], [w - 0.16, 0.07], [0.07, d - 0.16], [w - 0.16, d - 0.16]].map(([x, y], i) => (
+    <Box key={i} gx={gx + x} gy={gy + y} w={0.09} d={0.09} h={height} colors={colors} />
+  ))}</G>
+}
+
+/** Soft floor pouf, with a shaded lower welt and a gently domed top. */
+function SoftSeat({ box, z = 0, h, color }: { box: Box; z?: number; h: number; color: string }) {
+  const { gx, gy, w, d } = box
+  const p = iso(gx + w / 2, gy + d / 2, z)
+  const rx = (w + d) * 16 * 0.65
+  const ry = Math.min(Math.min(w, d) * 16 * 0.7, h * 0.32)
+  return <G>
+    <Ellipse cx={p.x} cy={p.y - ry} rx={rx} ry={ry} fill={color} />
+    <Ellipse cx={p.x} cy={p.y - ry} rx={rx} ry={ry} fill="#24170E" opacity={0.2} />
+    <Ellipse cx={p.x} cy={p.y - h + ry} rx={rx * 0.94} ry={ry} fill={color} stroke="#F3DEC0" strokeOpacity={0.2} strokeWidth={0.7} />
+    <Ellipse cx={p.x - rx * 0.15} cy={p.y - h + ry - 1} rx={rx * 0.54} ry={ry * 0.55} fill="#FFFFFF" opacity={0.07} />
+  </G>
+}
+
 function SofaSegment({ index }: { index: number }) {
   const { gx, gy, w, d } = SOFA
-  const segD = d / SOFA_SEGMENTS
-  const segGy = gy + index * segD
-  const cushionGy = gy + 0.42 + index * 0.92
+  const segD = (d - 2 * SOFA_ARM_D) / SOFA_SEGMENTS
+  const segGy = gy + SOFA_ARM_D + index * segD
+  const cushionGy = segGy + 0.04
   return (
     <G>
       {index === 1 ? <Shadow gx={gx + 0.5} gy={gy + 1.5} rx={50} ry={22} /> : null}
@@ -592,22 +615,13 @@ function SofaSegment({ index }: { index: number }) {
         colors={{ top: '#5C8378', left: '#416158', right: '#334D46' }}
       />
       <Box
-        gx={gx + 0.25}
+        gx={gx + 0.24}
         gy={cushionGy}
-        w={0.7}
-        d={0.78}
+        w={0.76}
+        d={segD - 0.08}
         z0={20}
         h={5}
         colors={{ top: '#6A9285', left: '#527A6E', right: '#42655B' }}
-      />
-      <Rect
-        x={iso(gx + 0.4, gy + 0.5 + index * 0.92, 25).x}
-        y={iso(gx + 0.4, gy + 0.5 + index * 0.92, 25).y}
-        width={13}
-        height={1.2}
-        rx={0.6}
-        fill="#EADCC4"
-        opacity={0.22}
       />
       {index === 0 ? (
         <Box
@@ -641,9 +655,9 @@ function SofaArm({ gy }: { gy: number }) {
       gx={SOFA.gx}
       gy={gy}
       w={SOFA.w}
-      d={0.22}
-      z0={20}
-      h={25}
+      d={SOFA_ARM_D}
+      z0={0}
+      h={45}
       colors={{ top: '#5C8378', left: '#45685E', right: '#355249' }}
     />
   )
@@ -654,7 +668,16 @@ function ArmchairBase({ box }: { box: Box }) {
   return (
     <G>
       <Shadow gx={gx + w / 2} gy={gy + d / 2} rx={34} ry={18} />
-      <Box gx={gx} gy={gy} w={w} d={d} z0={0} h={20} colors={RUST} />
+      <Box gx={gx} gy={gy} w={w - 0.12} d={d} z0={0} h={20} colors={RUST} />
+      <Box
+        gx={gx}
+        gy={gy}
+        w={w - 0.12}
+        d={0.15}
+        z0={20}
+        h={22}
+        colors={{ top: '#B26C4E', left: '#8D543D', right: '#71432F' }}
+      />
       <Box
         gx={gx + 0.08}
         gy={gy + 0.1}
@@ -666,17 +689,8 @@ function ArmchairBase({ box }: { box: Box }) {
       />
       <Box
         gx={gx}
-        gy={gy}
-        w={w}
-        d={0.15}
-        z0={20}
-        h={22}
-        colors={{ top: '#B26C4E', left: '#8D543D', right: '#71432F' }}
-      />
-      <Box
-        gx={gx}
         gy={gy + d - 0.15}
-        w={w}
+        w={w - 0.12}
         d={0.15}
         z0={20}
         h={22}
@@ -704,15 +718,12 @@ function ArmchairBack({ box }: { box: Box }) {
 
 function CoffeeTable({ now }: { now: number }) {
   const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.coffeeTable
-  const x = iso(gx + 0.8, gy + 0.55, 22)
+  const x = iso(gx + 0.8, gy + 0.55, 26.5)
   return (
     <G>
       <Shadow gx={gx + 0.8} gy={gy + 0.55} rx={40} ry={18} />
+      <Legs box={{ gx, gy, w, d }} height={18} />
       <Box gx={gx} gy={gy} w={w} d={d} z0={18} h={4.5} colors={WOOD} stroke="#C08B5D" strokeOpacity={0.4} />
-      <Box gx={gx + 0.12} gy={gy + 0.12} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
-      <Box gx={gx + w - 0.22} gy={gy + 0.12} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
-      <Box gx={gx + 0.12} gy={gy + 0.83} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
-      <Box gx={gx + w - 0.22} gy={gy + 0.83} w={0.1} d={0.1} z0={0} h={18} colors={WOOD} />
       {/* books */}
       <Box gx={gx + 0.25} gy={gy + 0.25} w={0.42} d={0.28} z0={22.5} h={2.2} colors={{ top: '#B4553A', left: '#8D3E2A', right: '#713020' }} />
       <Box gx={gx + 0.3} gy={gy + 0.27} w={0.38} d={0.25} z0={24.7} h={2.1} colors={{ top: '#E9DEC9', left: '#C9BCA4', right: '#B1A48C' }} />
@@ -721,10 +732,9 @@ function CoffeeTable({ now }: { now: number }) {
         <Ellipse cx={x.x} cy={x.y} rx={4.5} ry={2.4} fill="#F1E4CE" />
         <Rect x={x.x - 4.5} y={x.y} width={9} height={4} rx={2} fill="#D9C9AF" />
       </G>
-      {/* tiny plant */}
-      <Circle cx={iso(gx + 1.2, gy + 0.7, 28).x} cy={iso(gx + 1.2, gy + 0.7, 28).y} r={5} fill="#5F8A55" />
-      <Circle cx={iso(gx + 1.26, gy + 0.62, 30).x} cy={iso(gx + 1.26, gy + 0.62, 30).y} r={3.4} fill="#7BA36B" />
-      <Rect x={iso(gx + 1.2, gy + 0.7, 22).x - 3.4} y={iso(gx + 1.2, gy + 0.7, 22).y} width={6.8} height={6} rx={1.6} fill="#B4654A" />
+      {/* small terracotta planter stands on the tabletop */}
+      <Box gx={gx + 1.12} gy={gy + 0.62} w={0.16} d={0.16} z0={22.5} h={5} colors={RUST} />
+      <Circle cx={iso(gx + 1.2, gy + 0.7, 30).x} cy={iso(gx + 1.2, gy + 0.7, 30).y} r={4} fill="#5F8A55" />
       {/* steam from mug */}
       <Path
         d={`M ${x.x} ${x.y - 5} q 2 -3 0 -5 q -2 -2 0 -4`}
@@ -742,8 +752,7 @@ function Ottoman({ gy }: { gy: number }) {
   return (
     <G>
       <Shadow gx={gx + 0.42} gy={gy + 0.3} rx={24} ry={12} />
-      <Box gx={gx} gy={gy} w={0.84} d={0.58} z0={0} h={14} colors={{ top: '#7E6A57', left: '#655342', right: '#514233' }} />
-      <Box gx={gx + 0.05} gy={gy + 0.05} w={0.74} d={0.48} z0={14} h={5} colors={{ top: '#D3B483', left: '#B29365', right: '#95794F' }} />
+      <SoftSeat box={{ gx, gy, w: 0.84, d: 0.58 }} h={19} color="#C6A471" />
       <Line
         x1={iso(gx + 0.1, gy + 0.3, 19.4).x}
         y1={iso(gx + 0.1, gy + 0.3, 19.4).y}
@@ -762,7 +771,8 @@ function WindowBench() {
   return (
     <G>
       <Shadow gx={gx + 1.0} gy={gy + 0.5} rx={46} ry={18} />
-      <Box gx={gx} gy={gy} w={w} d={d} z0={0} h={14} colors={{ top: '#B79A6C', left: '#96794F', right: '#7C633F' }} />
+      <Legs box={{ gx, gy, w, d }} height={11} />
+      <Box gx={gx} gy={gy} w={w} d={d} z0={11} h={3} colors={WOOD} />
       <Box gx={gx + 0.04} gy={gy + 0.04} w={w - 0.08} d={d - 0.08} z0={14} h={5} colors={{ top: '#D8C29B', left: '#B9A27C', right: '#9C8662' }} />
       {[0, 1].map((i) => (
         <Box
@@ -781,45 +791,19 @@ function WindowBench() {
 }
 
 function Beanbag({ gx, gy, color }: { gx: number; gy: number; color: string }) {
-  const p = iso(gx, gy)
-  return (
-    <G>
-      <Shadow gx={gx} gy={gy} rx={26} ry={12} />
-      <Ellipse cx={p.x} cy={p.y - 5} rx={24} ry={11} fill={color} />
-      <Ellipse cx={p.x} cy={p.y - 9} rx={20} ry={9} fill={color} opacity={0.92} />
-      <Ellipse cx={p.x - 3} cy={p.y - 11} rx={15} ry={6.5} fill="#FFFFFF" opacity={0.08} />
-      <Ellipse cx={p.x + 6} cy={p.y - 4} rx={6} ry={3} fill="#1A120B" opacity={0.1} />
-    </G>
-  )
+  return <G>
+    <Shadow gx={gx} gy={gy} rx={21} ry={9} />
+    <SoftSeat box={{ gx: gx - 0.35, gy: gy - 0.35, w: 0.7, d: 0.7 }} h={16} color={color} />
+  </G>
 }
 
 function Cushion({ gx, gy }: { gx: number; gy: number }) {
-  return (
-    <G>
-      <Shadow gx={gx} gy={gy} rx={18} ry={8} />
-      <Box
-        gx={gx - 0.34}
-        gy={gy - 0.28}
-        w={0.68}
-        d={0.56}
-        z0={0}
-        h={6}
-        colors={{ top: '#C9B08B', left: '#A9916E', right: '#8C7658' }}
-        stroke="#E4D4B5"
-        strokeOpacity={0.6}
-      />
-      <Polygon
-        points={isoPoints([
-          [gx - 0.22, gy],
-          [gx, gy + 0.12],
-          [gx + 0.22, gy],
-          [gx, gy - 0.12],
-        ])}
-        fill="#8C7658"
-        opacity={0.4}
-      />
-    </G>
-  )
+  const p = iso(gx, gy, 6)
+  return <G>
+    <Shadow gx={gx} gy={gy} rx={17} ry={7} />
+    <SoftSeat box={{ gx: gx - 0.34, gy: gy - 0.28, w: 0.68, d: 0.56 }} h={6} color="#C9B08B" />
+    <Ellipse cx={p.x} cy={p.y + 4} rx={1.2} ry={0.6} fill="#8C7658" />
+  </G>
 }
 
 function CoffeeCounter({ now }: { now: number }) {
@@ -830,18 +814,10 @@ function CoffeeCounter({ now }: { now: number }) {
       <Shadow gx={gx + 1.5} gy={gy + 0.5} rx={54} ry={16} />
       <Box gx={gx} gy={gy} w={w} d={d} z0={0} h={32} colors={{ top: '#E8DDC9', left: '#7B5636', right: '#634428' }} />
       <Box gx={gx} gy={gy} w={w} d={d} z0={32} h={4} colors={CREAM} stroke="#F4EDE0" strokeOpacity={0.5} />
-      {[0, 1, 2].map((i) => (
-        <Rect
-          key={i}
-          x={iso(gx + 0.35 + i * 0.9, gy + 0.9, 14).x}
-          y={iso(gx + 0.35 + i * 0.9, gy + 0.9, 14).y}
-          width={12}
-          height={1.4}
-          rx={0.7}
-          fill="#3A291A"
-          opacity={0.5}
-        />
-      ))}
+      {[0, 1, 2].map((i) => <G key={i}>
+        <Polygon points={isoPoints([[gx + 0.08 + i * 1.0, gy + d, 3], [gx + 0.98 + i * 1.0, gy + d, 3], [gx + 0.98 + i * 1.0, gy + d, 29], [gx + 0.08 + i * 1.0, gy + d, 29]])} fill="#9A6B43" stroke="#543922" strokeWidth={0.6} />
+        <Polygon points={isoPoints([[gx + 0.35 + i, gy + d + 0.002, 24], [gx + 0.65 + i, gy + d + 0.002, 24], [gx + 0.65 + i, gy + d + 0.002, 22.5], [gx + 0.35 + i, gy + d + 0.002, 22.5]])} fill="#3A291A" />
+      </G>)}
       {/* coffee machine */}
       <Box gx={12.18} gy={0.55} w={0.6} d={0.42} z0={36} h={21} colors={{ top: '#3B3A37', left: '#292826', right: '#1F1E1C' }} />
       <Rect
@@ -882,10 +858,10 @@ function CoffeeCounter({ now }: { now: number }) {
       {/* cups + jar */}
       {[0, 1, 2].map((i) => (
         <G key={i}>
-          <Ellipse cx={iso(11.0 + i * 0.25, 0.86, 37).x} cy={iso(11.0 + i * 0.25, 0.86, 37).y} rx={3.4} ry={1.8} fill="#F4EDE0" />
+          <Ellipse cx={iso(11.0 + i * 0.25, 0.86, 40).x} cy={iso(11.0 + i * 0.25, 0.86, 40).y} rx={3.4} ry={1.8} fill="#F4EDE0" />
           <Rect
-            x={iso(11.0 + i * 0.25, 0.86, 37).x - 3.4}
-            y={iso(11.0 + i * 0.25, 0.86, 37).y}
+            x={iso(11.0 + i * 0.25, 0.86, 40).x - 3.4}
+            y={iso(11.0 + i * 0.25, 0.86, 40).y}
             width={6.8}
             height={4}
             rx={1.6}
@@ -894,8 +870,8 @@ function CoffeeCounter({ now }: { now: number }) {
         </G>
       ))}
       <Rect
-        x={iso(10.55, 0.86, 37).x - 5}
-        y={iso(10.55, 0.86, 37).y - 10}
+        x={iso(10.55, 0.86, 40).x - 5}
+        y={iso(10.55, 0.86, 40).y - 10}
         width={10}
         height={11}
         rx={2}
@@ -908,57 +884,33 @@ function CoffeeCounter({ now }: { now: number }) {
 
 function Bookshelf() {
   const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.bookshelf
-  const books = ['#B4553A', '#5C8D80', '#D3A85F', '#6E5A79', '#8DA37E', '#C9B08B', '#4D6BFE']
-  return (
-    <G>
-      <Shadow gx={gx + 0.4} gy={gy + 0.9} rx={36} ry={16} />
-      <Box gx={gx} gy={gy} w={w} d={d} z0={0} h={92} colors={{ top: '#5A3D28', left: '#4A3120', right: '#3B2618' }} />
-      <Box gx={gx + 0.58} gy={gy + 0.03} w={0.05} d={1.49} z0={4} h={84} colors={{ top: '#6B4A31', left: '#553824', right: '#442C1C' }} />
-      {[0, 1, 2, 3].map((shelf) => {
-        const z = 17 + shelf * 19
-        return (
-          <G key={shelf}>
-            <Box
-              gx={gx + 0.2}
-              gy={gy + 0.05}
-              w={0.4}
-              d={1.45}
-              z0={z}
-              h={2.2}
-              colors={{ top: '#6B4A31', left: '#553824', right: '#442C1C' }}
-            />
-            {books.slice(0, 5 + (shelf % 3)).map((color, i) => {
-              const p = iso(gx + 0.61, gy + 0.12 + i * 0.13, z + 11)
-              return (
-                <Rect
-                  key={i}
-                  x={p.x}
-                  y={p.y}
-                  width={2.6}
-                  height={10 - (i % 2)}
-                  rx={0.5}
-                  fill={color}
-                  opacity={0.92}
-                />
-              )
-            })}
-          </G>
-        )
-      })}
-      {/* little plant on top */}
-      <Circle cx={iso(gx + 0.3, gy + 0.3, 98).x} cy={iso(gx + 0.3, gy + 0.3, 98).y} r={5} fill="#5F8A55" />
-    </G>
-  )
+  const timber = { top: '#99704A', left: '#795333', right: '#573920' }
+  const books = ['#B4553A', '#5C8D80', '#D3A85F', '#6E5A79', '#8DA37E', '#C9B08B']
+  return <G>
+    <Shadow gx={gx + w / 2} gy={gy + d / 2} rx={30} ry={13} />
+    {/* Back panel, open toward +gx; shelves and spines are actual iso volumes. */}
+    <Box gx={gx} gy={gy} w={0.07} d={d} h={92} colors={{ top: '#795333', left: '#4A3120', right: '#3B2618' }} />
+    <Box gx={gx} gy={gy} w={w} d={0.07} h={92} colors={timber} />
+    {[0, 1, 2, 3].map((row) => {
+      const z = 4 + row * 21
+      return <G key={row}>
+        <Box gx={gx + 0.07} gy={gy + 0.07} w={w - 0.07} d={d - 0.14} z0={z} h={2.5} colors={timber} />
+        {books.map((color, i) => <Box key={i} gx={gx + 0.16} gy={gy + 0.14 + i * 0.21} w={w - 0.19} d={0.14} z0={z + 2.5} h={12 + (i + row) % 4} colors={{ top: color, left: color, right: color }} />)}
+      </G>
+    })}
+    <Box gx={gx} gy={gy + d - 0.07} w={w} d={0.07} h={92} colors={timber} />
+    <Box gx={gx} gy={gy} w={w} d={d} z0={89} h={3} colors={timber} />
+  </G>
 }
 
 function FloorLamp({ now }: { now: number }) {
   const { gx, gy, w, d } = FURNITURE_FOOTPRINTS.floorLamp
   const base = iso(gx + w / 2, gy + d / 2)
-  const shadeY = base.y - 92
+  const shadeY = base.y - 70
   return (
     <G>
       <Ellipse cx={base.x} cy={base.y + 1} rx={13} ry={6} fill="#0C0805" opacity={0.22} />
-      <Ellipse cx={base.x} cy={base.y} rx={10} ry={4.5} fill="#3C342C" />
+      <Box gx={gx} gy={gy} w={w} d={d} h={2} colors={METAL} />
       <Line x1={base.x} y1={base.y - 2} x2={base.x} y2={shadeY} stroke="#6B5B48" strokeWidth={2} />
       <Polygon
         points={`${base.x - 15},${shadeY + 12} ${base.x + 15},${shadeY + 12} ${base.x + 9},${shadeY - 8} ${base.x - 9},${shadeY - 8}`}
@@ -967,9 +919,10 @@ function FloorLamp({ now }: { now: number }) {
       <Polygon
         points={`${base.x - 15},${shadeY + 12} ${base.x + 15},${shadeY + 12} ${base.x + 9},${shadeY - 8} ${base.x - 9},${shadeY - 8}`}
         fill="#F3C57A"
-        opacity={0.35 + 0.08 * Math.sin(now / 900)}
+        opacity={0.2 + 0.04 * Math.sin(now / 900)}
       />
-      <Ellipse cx={base.x} cy={shadeY + 15} rx={34} ry={20} fill="#F3C57A" opacity={0.13} />
+      <Polygon points={`${base.x},${shadeY - 8} ${base.x + 9},${shadeY - 8} ${base.x + 15},${shadeY + 12} ${base.x},${shadeY + 12}`} fill="#A97E49" opacity={0.22} />
+      <Ellipse cx={base.x} cy={shadeY + 15} rx={14} ry={3} fill="#FFE3A5" opacity={0.35} />
     </G>
   )
 }
@@ -1000,7 +953,7 @@ function Plant({ box, seed }: { box: Box; seed: number }) {
       />
       <Ellipse cx={p.x} cy={p.y - 18 * scale} rx={9 * scale} ry={3.6 * scale} fill="#3A2A1D" opacity={0.55} />
       {leaves.map((leaf, i) => (
-        <G key={i} transform={`rotate(${leaf.angle * 0.25} ${leaf.topX} ${leaf.topY})`}>
+        <G key={i}>
           <Line
             x1={p.x}
             y1={p.y - 18 * scale}
@@ -1028,23 +981,8 @@ function SideTable() {
   return (
     <G>
       <Shadow gx={gx + 0.3} gy={gy + 0.3} rx={18} ry={9} />
+      <Legs box={{ gx, gy, w, d }} height={17} colors={METAL} />
       <Box gx={gx} gy={gy} w={w} d={d} z0={17} h={3.5} colors={WOOD} />
-      <Box gx={gx + 0.08} gy={gy + 0.08} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
-      <Box gx={gx + w - 0.15} gy={gy + 0.08} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
-      <Box gx={gx + 0.08} gy={gy + d - 0.15} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
-      <Box gx={gx + w - 0.15} gy={gy + d - 0.15} w={0.07} d={0.07} z0={0} h={17} colors={METAL} />
-      <Ellipse cx={iso(gx + 0.31, gy + 0.31, 24).x} cy={iso(gx + 0.31, gy + 0.31, 24).y} rx={6} ry={2.6} fill="#D9C9AF" />
-      <Rect x={iso(gx + 0.31, gy + 0.31, 24).x - 6} y={iso(gx + 0.31, gy + 0.31, 24).y} width={12} height={3.5} rx={1.6} fill="#C9B08B" />
-      <SvgText
-        x={iso(gx + 0.31, gy + 0.31, 30).x}
-        y={iso(gx + 0.31, gy + 0.31, 30).y}
-        textAnchor="middle"
-        fontSize={6}
-        fontFamily="DMSans_500Medium"
-        fill="#5A4630"
-      >
-        tea
-      </SvgText>
     </G>
   )
 }

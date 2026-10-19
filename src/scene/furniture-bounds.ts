@@ -59,7 +59,7 @@ export function furnitureBounds(): BoundedKey[] {
     add(`armchair-${n}-back`, boundsOf(inset(box, box.w - BACK_W, 0, 0, 0), 20, 50))
   }
 
-  add('coffee-table', boundsOf(F.coffeeTable, 0, 27))
+  add('coffee-table', boundsOf(F.coffeeTable, 0, 41))
   add('ottoman-1', boundsOf(F.ottomanNorth, 0, 19))
   add('ottoman-2', boundsOf(F.ottomanSouth, 0, 19))
   add('window-bench', boundsOf(F.windowBench, 0, 23))
@@ -68,7 +68,8 @@ export function furnitureBounds(): BoundedKey[] {
     // cushion 1 rests on the side table (top at z 20.5)
     add(`cushion-${i + 1}`, boundsOf(box, i === 0 ? 20.5 : 0, i === 0 ? 27 : 6))
   })
-  add('coffee-counter', boundsOf(F.coffeeCounter, 0, 57))
+  // Includes the faint steam above the machine.
+  add('coffee-counter', boundsOf(F.coffeeCounter, 0, 75))
   add('bookshelf', boundsOf(F.bookshelf, 0, 92))
   add('floor-lamp', boundsOf(F.floorLamp, 0, 78))
   add('side-table', boundsOf(F.sideTable, 0, 20.5))
