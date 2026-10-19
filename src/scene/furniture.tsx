@@ -9,9 +9,10 @@ import {
   Rect,
   Text as SvgText,
 } from 'react-native-svg'
-import { iso, isoPoints, hashIndex, TILE_H, TILE_W } from './iso'
+import { iso, isoPoints, floorPolygon, hashIndex, TILE_H, TILE_W } from './iso'
 import { DESK_BENCHES, DESK_SEATS, type Seat } from './layout'
 import { FURNITURE_FOOTPRINTS, type Box } from './footprints'
+import { FURNITURE_BOUNDS, SOFA_SEGMENTS } from './furniture-bounds'
 import type { SceneItem } from './types'
 
 type BoxColors = { top: string; left: string; right: string }
@@ -88,167 +89,167 @@ const TEAL = { top: '#6C9488', left: '#52776B', right: '#3F5D54' }
 const RUST = { top: '#C57D5E', left: '#9C6249', right: '#7F4E38' }
 const CREAM = { top: '#E9DEC9', left: '#C9BCA4', right: '#B1A48C' }
 
-/** Painter depth for an axis-aligned footprint: its front (max gx+gy) corner. */
-function frontDepth(gx: number, gy: number, w: number, d: number): number {
-  return gx + w + gy + d
-}
-
 const SOFA = FURNITURE_FOOTPRINTS.sofa
-const SOFA_SEGMENTS = 3
 
-export function buildFurniture(occupied: Set<number>, now: number): SceneItem[] {
+/** Sort bounds (footprint + height) for every key; see furniture-bounds.ts. */
+const BOUNDS = FURNITURE_BOUNDS
+
+/**
+ * Every static drawable, with the 3D bounds the painter ordering in depth.ts needs. `occupied`
+ * lights the monitors (typing). `seated` marks desks whose worker sprite draws its own chair
+ * seat and back; those chairs render only their base here so the back is never drawn twice.
+ */
+export function buildFurniture(
+  occupied: Set<number>,
+  now: number,
+  seated: Set<number> = occupied,
+): SceneItem[] {
   const items: SceneItem[] = []
-  const add = (key: string, depth: number, node: ReactNode) =>
-    items.push({ key, depth, node })
+  const add = (key: string, node: ReactNode) => {
+    const bounds = BOUNDS.get(key)
+    if (!bounds) throw new Error(`furniture item ${key} has no sort bounds`)
+    items.push({ key, bounds, node })
+  }
 
   DESK_BENCHES.forEach((bench, index) => {
-    add(
-      `bench-${index}`,
-      bench.gx + bench.gy,
-      <G>
-        <Shadow gx={bench.gx + bench.w / 2 - 0.1} gy={bench.gy + bench.d / 2} rx={105} ry={24} />
-        <DeskBench bench={bench} index={index} />
-      </G>,
-    )
+    add(`bench-${index}`, <DeskBench bench={bench} index={index} />)
   })
 
   DESK_SEATS.forEach((seat, index) => {
-    // The monitor, keyboard and desk clutter are one unit. Its full footprint includes
-    // the keyboard sitting just behind the worker at this seat.
+    // The monitor, keyboard and desk clutter are one unit on the bench top.
     const monitorBox = FURNITURE_FOOTPRINTS.monitors[index]
-    const chairBox = FURNITURE_FOOTPRINTS.chairs[index]
     add(
       `monitor-${index}`,
-      frontDepth(monitorBox.gx, monitorBox.gy, monitorBox.w, monitorBox.d),
       <Monitor seat={seat} box={monitorBox} occupied={occupied.has(index)} now={now} index={index} />,
     )
-    add(
-      `chair-${index}`,
-      frontDepth(chairBox.gx + 0.07, chairBox.gy + 0.36, 0.46, 0.09),
-      <DeskChair seat={seat} index={index} />,
-    )
+    add(`chair-${index}`, <DeskChair seat={seat} index={index} occupied={seated.has(index)} />)
   })
 
-  // Split the sofa into seat-sized slices so each seated character can draw just
-  // after its own cushion, instead of behind the whole three-seat body.
-  const sofaSegD = SOFA.d / SOFA_SEGMENTS
-  for (let i = 0; i < SOFA_SEGMENTS; i++) {
-    const gy0 = SOFA.gy + i * sofaSegD
-    const cushionGy = SOFA.gy + 0.42 + i * 0.92
-    const depth = Math.max(
-      frontDepth(SOFA.gx, gy0, SOFA.w, sofaSegD),
-      frontDepth(SOFA.gx, gy0, 0.24, sofaSegD),
-      frontDepth(SOFA.gx + 0.25, cushionGy, 0.7, 0.78),
-      i === 0 ? frontDepth(SOFA.gx + 0.2, SOFA.gy + 0.32, 0.38, 0.32) : 0,
-      i === 2 ? frontDepth(SOFA.gx + 0.2, SOFA.gy + 2.48, 0.38, 0.32) : 0,
-    )
-    add(`sofa-${i}`, depth, <SofaSegment index={i} />)
-  }
-  add(
-    'sofa-arm-back',
-    frontDepth(SOFA.gx, SOFA.gy, SOFA.w, 0.22),
-    <SofaArm gy={SOFA.gy} />,
-  )
-  add(
-    'sofa-arm-front',
-    frontDepth(SOFA.gx, SOFA.gy + 2.83, SOFA.w, 0.22),
-    <SofaArm gy={SOFA.gy + 2.83} />,
-  )
+  // The sofa is split into seat-sized slices (plus an arm at each end) so a character on one
+  // seat orders against its own slice and its neighbours independently.
+  for (let i = 0; i < SOFA_SEGMENTS; i++) add(`sofa-${i}`, <SofaSegment index={i} />)
+  add('sofa-arm-back', <SofaArm gy={SOFA.gy} />)
+  add('sofa-arm-front', <SofaArm gy={SOFA.gy + 2.83} />)
 
   const northArm = FURNITURE_FOOTPRINTS.armchairNorth
   const southArm = FURNITURE_FOOTPRINTS.armchairSouth
-  const coffeeTable = FURNITURE_FOOTPRINTS.coffeeTable
   const northOttoman = FURNITURE_FOOTPRINTS.ottomanNorth
   const southOttoman = FURNITURE_FOOTPRINTS.ottomanSouth
-  const windowBench = FURNITURE_FOOTPRINTS.windowBench
-  const coffeeCounter = FURNITURE_FOOTPRINTS.coffeeCounter
-  const bookshelf = FURNITURE_FOOTPRINTS.bookshelf
-  const sideTable = FURNITURE_FOOTPRINTS.sideTable
-  const lamp = FURNITURE_FOOTPRINTS.floorLamp
 
-  add('armchair-1', frontDepth(northArm.gx, northArm.gy, northArm.w, northArm.d), <ArmchairBase box={northArm} />)
-  add('armchair-1-back', frontDepth(northArm.gx + northArm.w - 0.12, northArm.gy, 0.12, northArm.d), <ArmchairBack box={northArm} />)
-  add('armchair-2', frontDepth(southArm.gx, southArm.gy, southArm.w, southArm.d), <ArmchairBase box={southArm} />)
-  add('armchair-2-back', frontDepth(southArm.gx + southArm.w - 0.12, southArm.gy, 0.12, southArm.d), <ArmchairBack box={southArm} />)
-  add('coffee-table', frontDepth(coffeeTable.gx, coffeeTable.gy, coffeeTable.w, coffeeTable.d), <CoffeeTable now={now} />)
-  add('ottoman-1', frontDepth(northOttoman.gx, northOttoman.gy, northOttoman.w, northOttoman.d), <Ottoman gy={northOttoman.gy} />)
-  add('ottoman-2', frontDepth(southOttoman.gx, southOttoman.gy, southOttoman.w, southOttoman.d), <Ottoman gy={southOttoman.gy} />)
-  add('window-bench', frontDepth(windowBench.gx, windowBench.gy, windowBench.w, windowBench.d), <WindowBench />)
+  add('armchair-1', <ArmchairBase box={northArm} />)
+  add('armchair-1-back', <ArmchairBack box={northArm} />)
+  add('armchair-2', <ArmchairBase box={southArm} />)
+  add('armchair-2-back', <ArmchairBack box={southArm} />)
+  add('coffee-table', <CoffeeTable now={now} />)
+  add('ottoman-1', <Ottoman gy={northOttoman.gy} />)
+  add('ottoman-2', <Ottoman gy={southOttoman.gy} />)
+  add('window-bench', <WindowBench />)
 
   const beanbagColors = ['#C98A4B', '#5C8D80', '#B4654A', '#6E5A79']
   FURNITURE_FOOTPRINTS.beanbags.forEach((bag, i) => {
-    const gx = bag.gx + bag.w / 2
-    const gy = bag.gy + bag.d / 2
-    add(`beanbag-${i + 1}`, gx + gy + 0.4, <Beanbag gx={gx} gy={gy} color={beanbagColors[i]} />)
+    add(
+      `beanbag-${i + 1}`,
+      <Beanbag gx={bag.gx + bag.w / 2} gy={bag.gy + bag.d / 2} color={beanbagColors[i]} />,
+    )
   })
 
   FURNITURE_FOOTPRINTS.cushions.forEach((cushion, i) => {
-    const gx = cushion.gx + cushion.w / 2
-    const gy = cushion.gy + cushion.d / 2
-    add(`cushion-${i + 1}`, frontDepth(cushion.gx, cushion.gy, cushion.w, cushion.d), <Cushion gx={gx} gy={gy} />)
+    add(
+      `cushion-${i + 1}`,
+      <Cushion gx={cushion.gx + cushion.w / 2} gy={cushion.gy + cushion.d / 2} />,
+    )
   })
 
-  add('coffee-counter', frontDepth(coffeeCounter.gx, coffeeCounter.gy, coffeeCounter.w, coffeeCounter.d), <CoffeeCounter now={now} />)
-  add('bookshelf', frontDepth(bookshelf.gx, bookshelf.gy, bookshelf.w, bookshelf.d), <Bookshelf />)
-  add('floor-lamp', lamp.gx + lamp.w / 2 + lamp.gy + lamp.d / 2 + 0.3, <FloorLamp now={now} />)
+  add('coffee-counter', <CoffeeCounter now={now} />)
+  add('bookshelf', <Bookshelf />)
+  add('floor-lamp', <FloorLamp now={now} />)
 
   FURNITURE_FOOTPRINTS.plantSpecs.forEach((spec, index) => {
-    const { box, seed } = spec
-    const gx = box.gx + box.w / 2
-    const gy = box.gy + box.d / 2
-    add(`plant-${index}`, gx + gy + 0.5 * spec.scale, <Plant box={box} seed={seed} />)
+    add(`plant-${index}`, <Plant box={spec.box} seed={spec.seed} />)
   })
-  add('side-table', frontDepth(sideTable.gx, sideTable.gy, sideTable.w, sideTable.d), <SideTable />)
+  add('side-table', <SideTable />)
 
   return items
 }
 
+const BENCH_TOP_Z0 = 29
+const BENCH_TOP_H = 4.5
+const BENCH_LEG = 0.11
+const BENCH_INSET = 0.07
+/** The mid-span support sits between chairs 3 and 4 (gap in the seat row). */
+const BENCH_MID_OFFSET = 3.55
+
+/**
+ * A slab on legs. Everything under the slab is drawn first, back to front (modesty panel, rear
+ * legs, front legs), then the slab on top: the legs are inset from the slab edge, so the slab's
+ * near faces correctly cover their tops. Every leg runs from the floor to the slab underside
+ * (z 0 to 29), so nothing floats.
+ */
 function DeskBench({ bench, index }: { bench: (typeof DESK_BENCHES)[number]; index: number }) {
+  void index
   const { gx, gy, w, d } = bench
+  const left = gx + BENCH_INSET
+  const right = gx + w - BENCH_INSET - BENCH_LEG
+  const mid = gx + BENCH_MID_OFFSET - BENCH_LEG / 2
+  const back = gy + BENCH_INSET
+  const front = gy + d - BENCH_INSET - BENCH_LEG
+  const leg = (x: number, y: number) => (
+    <Box
+      key={`${x}-${y}`}
+      gx={x}
+      gy={y}
+      w={BENCH_LEG}
+      d={BENCH_LEG}
+      z0={0}
+      h={BENCH_TOP_Z0}
+      colors={METAL}
+    />
+  )
   return (
     <G>
-      <Box gx={gx} gy={gy} w={w} d={d} z0={29} h={4.5} colors={WOOD} stroke="#C08B5D" strokeOpacity={0.4} />
-      <Box gx={gx + 0.08} gy={gy + 0.12} w={0.14} d={0.14} z0={0} h={29} colors={METAL} />
-      <Box gx={gx + w - 0.22} gy={gy + 0.12} w={0.14} d={0.14} z0={0} h={29} colors={METAL} />
-      <Box gx={gx + 0.08} gy={gy + d - 0.26} w={0.14} d={0.14} z0={0} h={29} colors={METAL} />
-      <Box gx={gx + w - 0.22} gy={gy + d - 0.26} w={0.14} d={0.14} z0={0} h={29} colors={METAL} />
-      <Box
-        gx={gx + 0.35}
-        gy={gy + 0.2}
-        w={w - 0.7}
-        d={0.12}
-        z0={14}
-        h={2.4}
-        colors={{ top: '#7D5738', left: '#5C3D26', right: '#4C321E' }}
+      {/* soft contact shadow, offset away from the window light */}
+      <Polygon
+        points={floorPolygon(gx + 0.04, gy + 0.1, w + 0.12, d + 0.16)}
+        fill="#0C0805"
+        opacity={0.2}
       />
-      {/* under-desk paper tray */}
+      {/* rear modesty panel, behind everything under the slab */}
       <Box
-        gx={gx + 2.2}
-        gy={gy + 0.25}
-        w={0.55}
-        d={0.35}
-        z0={20}
-        h={4}
-        colors={{ top: '#D8CBB4', left: '#B7A88E', right: '#9A8B73' }}
+        gx={left + BENCH_LEG / 2}
+        gy={back + 0.02}
+        w={right - left}
+        d={0.05}
+        z0={11}
+        h={BENCH_TOP_Z0 - 11}
+        colors={{ top: '#6A4A30', left: '#4F3622', right: '#3F2B1A' }}
       />
+      {leg(left, back)}
+      {leg(mid, back)}
+      {leg(right, back)}
+      {leg(left, front)}
+      {leg(mid, front)}
+      {leg(right, front)}
       <Box
-        gx={gx + 3.9}
-        gy={gy + 0.28}
-        w={0.36}
-        d={0.3}
-        z0={21}
-        h={6}
-        colors={{ top: '#55483C', left: '#3C332B', right: '#2E2620' }}
+        gx={gx}
+        gy={gy}
+        w={w}
+        d={d}
+        z0={BENCH_TOP_Z0}
+        h={BENCH_TOP_H}
+        colors={WOOD}
+        stroke="#C08B5D"
+        strokeOpacity={0.4}
       />
-      {index === 0 ? (
-        <G>
-          <Rect x={iso(gx + 1.0, gy + 0.48).x} y={iso(gx + 1.0, gy + 0.48).y - 36} width={22} height={3} rx={1.5} fill="#E9A94C" opacity={0.5} />
-        </G>
-      ) : null}
     </G>
   )
 }
 
+const MONITOR_Z0 = BENCH_TOP_Z0 + BENCH_TOP_H
+
+/**
+ * Monitor, keyboard and clutter, all standing ON the bench top (z 33.5) inside the shared
+ * monitor box. Back to front: lamp, stand foot, neck, panel, keyboard, mug.
+ */
 function Monitor({
   seat,
   box,
@@ -262,52 +263,78 @@ function Monitor({
   now: number
   index: number
 }) {
-  const monitorBox = box
-  const gy = monitorBox.gy
-  const gx = monitorBox.gx
-  const frontGy = gy + 0.06
-  const screenBottom = 48
-  const screenTop = 68
-  const sx1 = iso(gx, frontGy, screenBottom)
-  const sx2 = iso(gx + 0.9, frontGy, screenBottom)
-  const st2 = iso(gx + 0.9, frontGy, screenTop)
-  const st1 = iso(gx, frontGy, screenTop)
-  const p = (t: number, z: number) => iso(gx + 0.05 + t * 0.8, frontGy, z)
-
+  const cx = box.gx + box.w / 2
+  const by = box.gy
+  const panelGy = by + 0.18
+  const panelD = 0.06
+  const fy = panelGy + panelD
+  const sx0 = cx - 0.39
+  const sx1 = cx + 0.39
+  const screenBottom = 47.5
+  const screenTop = 65.5
+  const s1 = iso(sx0, fy, screenBottom)
+  const s2 = iso(sx1, fy, screenBottom)
+  const s3 = iso(sx1, fy, screenTop)
+  const s4 = iso(sx0, fy, screenTop)
+  const p = (t: number, z: number) => iso(sx0 + t * (sx1 - sx0), fy, z)
   const lineColor = occupied ? '#8FE3D0' : '#46504F'
+
+  const mug = iso(cx + 0.4, by + 0.34, MONITOR_Z0 + 5)
+  const lampBase = { gx: cx - 0.4, gy: by + 0.2 }
+  const lampTop = iso(lampBase.gx, lampBase.gy, MONITOR_Z0 + 22)
+  const lampFoot = iso(lampBase.gx, lampBase.gy, MONITOR_Z0)
   return (
     <G>
+      {index % 4 === 0 ? (
+        <G>
+          <Box
+            gx={lampBase.gx - 0.07}
+            gy={lampBase.gy - 0.07}
+            w={0.14}
+            d={0.14}
+            z0={MONITOR_Z0}
+            h={1.2}
+            colors={METAL}
+          />
+          <Line
+            x1={lampFoot.x}
+            y1={lampFoot.y - 1}
+            x2={lampTop.x}
+            y2={lampTop.y}
+            stroke="#4A453C"
+            strokeWidth={1.6}
+          />
+          <Polygon
+            points={`${iso(lampBase.gx - 0.12, lampBase.gy, MONITOR_Z0 + 21).x},${iso(lampBase.gx - 0.12, lampBase.gy, MONITOR_Z0 + 21).y} ${iso(lampBase.gx + 0.12, lampBase.gy, MONITOR_Z0 + 21).x},${iso(lampBase.gx + 0.12, lampBase.gy, MONITOR_Z0 + 21).y} ${iso(lampBase.gx + 0.07, lampBase.gy, MONITOR_Z0 + 28).x},${iso(lampBase.gx + 0.07, lampBase.gy, MONITOR_Z0 + 28).y} ${iso(lampBase.gx - 0.07, lampBase.gy, MONITOR_Z0 + 28).x},${iso(lampBase.gx - 0.07, lampBase.gy, MONITOR_Z0 + 28).y}`}
+            fill="#E9C083"
+          />
+          <Circle cx={lampTop.x} cy={lampTop.y - 3} r={13} fill="#F3C57A" opacity={0.08} />
+        </G>
+      ) : null}
+      {/* stand: foot plate, neck, then the panel */}
       <Box
-        gx={gx + 0.36}
-        gy={gy + 0.04}
-        w={0.18}
-        d={0.18}
-        z0={33.5}
-        h={8}
-        colors={METAL}
-      />
-      <Box
-        gx={gx + 0.12}
-        gy={gy + 0.16}
-        w={0.66}
-        d={0.16}
-        z0={33.5}
+        gx={cx - 0.16}
+        gy={by + 0.1}
+        w={0.32}
+        d={0.22}
+        z0={MONITOR_Z0}
         h={1.4}
         colors={{ top: '#3A3834', left: '#2A2824', right: '#211F1C' }}
       />
+      <Box gx={cx - 0.04} gy={by + 0.2} w={0.08} d={0.06} z0={MONITOR_Z0 + 1.4} h={11} colors={METAL} />
       <Box
-        gx={gx}
-        gy={gy}
-        w={0.9}
-        d={0.07}
-        z0={46}
-        h={23}
+        gx={cx - 0.44}
+        gy={panelGy}
+        w={0.88}
+        d={panelD}
+        z0={45.5}
+        h={22}
         colors={SCREEN}
         stroke="#101414"
         strokeOpacity={0.9}
       />
       <Polygon
-        points={`${sx1.x},${sx1.y} ${sx2.x},${sx2.y} ${st2.x},${st2.y} ${st1.x},${st1.y}`}
+        points={`${s1.x},${s1.y} ${s2.x},${s2.y} ${s3.x},${s3.y} ${s4.x},${s4.y}`}
         fill={occupied ? '#215052' : '#1A2223'}
         stroke="#0B1112"
         strokeWidth={1}
@@ -315,7 +342,7 @@ function Monitor({
       {occupied ? (
         <G>
           {[0, 1, 2, 3].map((i) => {
-            const z = 63.5 - i * 3.9
+            const z = 62.6 - i * 3.9
             const a = p(0.08 + (i % 2) * 0.04, z)
             const b = p(0.55 + (i % 3) * 0.1, z)
             const opacity = 0.62 + 0.38 * (0.5 + 0.5 * Math.sin(now / 420 + i * 1.4))
@@ -333,26 +360,26 @@ function Monitor({
             )
           })}
           <Line
-            x1={p(0.66, 55).x}
-            y1={p(0.66, 55).y}
-            x2={p(0.82, 55).x}
-            y2={p(0.82, 55).y}
+            x1={p(0.66, 54).x}
+            y1={p(0.66, 54).y}
+            x2={p(0.82, 54).x}
+            y2={p(0.82, 54).y}
             stroke="#E9A94C"
             strokeWidth={1.1}
             opacity={0.7}
           />
           <Line
-            x1={p(0, 66 - ((now / 900) % 1) * 16).x}
-            y1={p(0, 66 - ((now / 900) % 1) * 16).y}
-            x2={p(0.86, 66 - ((now / 900) % 1) * 16).x}
-            y2={p(0.86, 66 - ((now / 900) % 1) * 16).y}
+            x1={p(0, 64.5 - ((now / 900) % 1) * 16).x}
+            y1={p(0, 64.5 - ((now / 900) % 1) * 16).y}
+            x2={p(0.96, 64.5 - ((now / 900) % 1) * 16).x}
+            y2={p(0.96, 64.5 - ((now / 900) % 1) * 16).y}
             stroke="#8FE3D0"
             strokeWidth={1}
             opacity={0.32}
           />
           <Ellipse
-            cx={sx1.x + (sx2.x - sx1.x) / 2}
-            cy={st1.y + 12}
+            cx={(s1.x + s2.x) / 2}
+            cy={s4.y + 12}
             rx={20}
             ry={15}
             fill="#63B9A8"
@@ -362,19 +389,19 @@ function Monitor({
       ) : (
         <G>
           <Line
-            x1={p(0.22, 60).x}
-            y1={p(0.22, 60).y}
-            x2={p(0.66, 60).x}
-            y2={p(0.66, 60).y}
+            x1={p(0.22, 59).x}
+            y1={p(0.22, 59).y}
+            x2={p(0.66, 59).x}
+            y2={p(0.66, 59).y}
             stroke="#3A4747"
             strokeWidth={1.1}
             opacity={0.6}
           />
           <Line
-            x1={p(0.3, 56).x}
-            y1={p(0.3, 56).y}
-            x2={p(0.58, 56).x}
-            y2={p(0.58, 56).y}
+            x1={p(0.3, 55).x}
+            y1={p(0.3, 55).y}
+            x2={p(0.58, 55).x}
+            y2={p(0.58, 55).y}
             stroke="#3A4747"
             strokeWidth={1.1}
             opacity={0.35}
@@ -382,55 +409,37 @@ function Monitor({
         </G>
       )}
 
-      {/* keyboard + desk clutter; the shared monitor box includes this extent */}
+      {/* keyboard on the bench top, in front of the stand */}
       <Box
-        gx={gx + 0.13}
-        gy={gy + 0.48}
-        w={0.64}
-        d={monitorBox.d - 0.48}
-        z0={34.2}
-        h={1.6}
+        gx={cx - 0.26}
+        gy={by + 0.4}
+        w={0.52}
+        d={0.22}
+        z0={MONITOR_Z0}
+        h={1.5}
         colors={{ top: '#312C27', left: '#24201C', right: '#1C1916' }}
       />
-      {[0, 1, 2].map((row) => (
-        <Line
-          key={row}
-          x1={iso(seat.gx - 0.24, gy + 0.52, 36).x}
-          y1={iso(seat.gx - 0.24, gy + 0.52 + row * 0.04, 36).y}
-          x2={iso(seat.gx + 0.24, gy + 0.52 + row * 0.04, 36).x}
-          y2={iso(seat.gx + 0.24, gy + 0.52 + row * 0.04, 36).y}
-          stroke="#5C544A"
-          strokeWidth={0.6}
-          opacity={0.8}
-        />
-      ))}
+      {[0, 1, 2].map((row) => {
+        const y = by + 0.45 + row * 0.055
+        const a = iso(cx - 0.22, y, MONITOR_Z0 + 1.6)
+        const b = iso(cx + 0.22, y, MONITOR_Z0 + 1.6)
+        return (
+          <Line
+            key={row}
+            x1={a.x}
+            y1={a.y}
+            x2={b.x}
+            y2={b.y}
+            stroke="#5C544A"
+            strokeWidth={0.6}
+            opacity={0.8}
+          />
+        )
+      })}
       {index % 3 === 1 ? (
         <G>
-          <Ellipse cx={iso(seat.gx + 0.38, gy + 0.3, 35).x} cy={iso(seat.gx + 0.38, gy + 0.3, 35).y} rx={4.2} ry={2.4} fill="#F1E4CE" />
-          <Rect x={iso(seat.gx + 0.38, gy + 0.3, 35).x - 4.2} y={iso(seat.gx + 0.38, gy + 0.3, 35).y} width={8.4} height={5} rx={2} fill="#D9C9AF" />
-        </G>
-      ) : null}
-      {index % 4 === 0 ? (
-        <G>
-          <Line
-            x1={iso(seat.gx - 0.42, gy + 0.26, 34).x}
-            y1={iso(seat.gx - 0.42, gy + 0.26, 34).y}
-            x2={iso(seat.gx - 0.42, gy + 0.26, 58).x}
-            y2={iso(seat.gx - 0.42, gy + 0.26, 58).y}
-            stroke="#4A453C"
-            strokeWidth={1.6}
-          />
-          <Polygon
-            points={`${iso(seat.gx - 0.6, gy + 0.26, 59).x},${iso(seat.gx - 0.6, gy + 0.26, 59).y} ${iso(seat.gx - 0.24, gy + 0.26, 59).x},${iso(seat.gx - 0.24, gy + 0.26, 59).y} ${iso(seat.gx - 0.3, gy + 0.26, 66).x},${iso(seat.gx - 0.3, gy + 0.26, 66).y} ${iso(seat.gx - 0.54, gy + 0.26, 66).x},${iso(seat.gx - 0.54, gy + 0.26, 66).y}`}
-            fill="#E9C083"
-          />
-          <Circle
-            cx={iso(seat.gx - 0.42, gy + 0.26, 52).x}
-            cy={iso(seat.gx - 0.42, gy + 0.26, 52).y}
-            r={13}
-            fill="#F3C57A"
-            opacity={0.08}
-          />
+          <Rect x={mug.x - 4} y={mug.y} width={8} height={5} rx={1.6} fill="#D9C9AF" />
+          <Ellipse cx={mug.x} cy={mug.y} rx={4} ry={2.2} fill="#F1E4CE" />
         </G>
       ) : null}
     </G>
@@ -442,7 +451,7 @@ export function chairFabric(index: number) {
   return index % 3 === 0 ? RUST : TEAL
 }
 
-const CHAIR_BACK = { gx: -0.23, gy: 0.16, w: 0.46, d: 0.09, z0: 18, h: 17 }
+const CHAIR_BACK = { gx: -0.21, gy: 0.17, w: 0.42, d: 0.08, z0: 18.5, h: 12 }
 const CHAIR_SEAT = { gx: -0.26, gy: -0.18, w: 0.52, d: 0.36, z0: 14, h: 4.5 }
 
 type LocalPoint = { x: number; y: number }
@@ -500,40 +509,66 @@ export const CHAIR_SEAT_LOCAL = (() => {
   }
 })()
 
-function DeskChair({ seat, index }: { seat: Seat; index: number }) {
+/**
+ * Desk chair, drawn from behind. It is pushed in toward the bench with its back on the viewer
+ * side (+gy), and the back is kept low (top z 30.5) so a worker's shoulders and head stay clear.
+ *
+ * Ownership of the chair seat and back: an EMPTY chair is drawn here in full. When someone sits
+ * in it (`occupied`), this component draws only the base (shadow, casters, star base, post) and
+ * the worker sprite draws the seat and the back itself from CHAIR_SEAT_LOCAL / CHAIR_BACK_LOCAL,
+ * which are derived from the same CHAIR_SEAT / CHAIR_BACK geometry. Exactly one of the two draws
+ * the back, so it is never doubled, and the back always lands in front of the worker's lower
+ * back because it is part of the sprite.
+ */
+function DeskChair({ seat, index, occupied }: { seat: Seat; index: number; occupied: boolean }) {
   const fabric = chairFabric(index)
+  const { gx, gy } = seat
+  const caster = (x: number, y: number) => (
+    <Box key={`${x}-${y}`} gx={x - 0.04} gy={y - 0.04} w={0.08} d={0.08} z0={0} h={2.2} colors={METAL} />
+  )
   return (
     <G>
-      <Shadow gx={seat.gx} gy={seat.gy + 0.05} rx={20} ry={8} />
-      <Box gx={seat.gx - 0.3} gy={seat.gy - 0.2} w={0.08} d={0.08} z0={0} h={14} colors={METAL} />
-      <Box gx={seat.gx + 0.22} gy={seat.gy - 0.2} w={0.08} d={0.08} z0={0} h={14} colors={METAL} />
-      <Box gx={seat.gx - 0.3} gy={seat.gy + 0.24} w={0.08} d={0.08} z0={0} h={14} colors={METAL} />
-      <Box gx={seat.gx + 0.22} gy={seat.gy + 0.24} w={0.08} d={0.08} z0={0} h={14} colors={METAL} />
-      <Box gx={seat.gx + CHAIR_SEAT.gx} gy={seat.gy + CHAIR_SEAT.gy} w={CHAIR_SEAT.w} d={CHAIR_SEAT.d} z0={CHAIR_SEAT.z0} h={CHAIR_SEAT.h} colors={fabric} />
-      <Box
-        gx={seat.gx + CHAIR_BACK.gx}
-        gy={seat.gy + CHAIR_BACK.gy}
-        w={CHAIR_BACK.w}
-        d={CHAIR_BACK.d}
-        z0={CHAIR_BACK.z0}
-        h={CHAIR_BACK.h}
-        colors={{
-          top: fabric.top,
-          left: fabric.left,
-          right: fabric.right,
-        }}
-        stroke="#2A2119"
-        strokeOpacity={0.4}
-      />
-      <Rect
-        x={iso(seat.gx - 0.18, seat.gy + 0.2, 32).x}
-        y={iso(seat.gx - 0.18, seat.gy + 0.2, 32).y}
-        width={9}
-        height={1.2}
-        rx={0.6}
-        fill="#F4EDE0"
-        opacity={0.18}
-      />
+      <Shadow gx={gx} gy={gy + 0.05} rx={19} ry={8} />
+      {caster(gx, gy - 0.23)}
+      {caster(gx - 0.23, gy)}
+      {caster(gx + 0.23, gy)}
+      {caster(gx, gy + 0.23)}
+      <Box gx={gx - 0.23} gy={gy - 0.03} w={0.46} d={0.06} z0={2.2} h={1.2} colors={METAL} />
+      <Box gx={gx - 0.03} gy={gy - 0.23} w={0.06} d={0.46} z0={2.2} h={1.2} colors={METAL} />
+      <Box gx={gx - 0.035} gy={gy - 0.035} w={0.07} d={0.07} z0={3.4} h={CHAIR_SEAT.z0 - 3.4} colors={METAL} />
+      {occupied ? null : (
+        <G>
+          <Box
+            gx={gx + CHAIR_SEAT.gx}
+            gy={gy + CHAIR_SEAT.gy}
+            w={CHAIR_SEAT.w}
+            d={CHAIR_SEAT.d}
+            z0={CHAIR_SEAT.z0}
+            h={CHAIR_SEAT.h}
+            colors={fabric}
+          />
+          <Box
+            gx={gx + CHAIR_BACK.gx}
+            gy={gy + CHAIR_BACK.gy}
+            w={CHAIR_BACK.w}
+            d={CHAIR_BACK.d}
+            z0={CHAIR_BACK.z0}
+            h={CHAIR_BACK.h}
+            colors={fabric}
+            stroke="#2A2119"
+            strokeOpacity={0.4}
+          />
+          <Rect
+            x={iso(gx - 0.14, gy + CHAIR_BACK.gy + CHAIR_BACK.d, CHAIR_BACK.z0 + CHAIR_BACK.h - 3).x}
+            y={iso(gx - 0.14, gy + CHAIR_BACK.gy + CHAIR_BACK.d, CHAIR_BACK.z0 + CHAIR_BACK.h - 3).y}
+            width={9}
+            height={1.2}
+            rx={0.6}
+            fill="#F4EDE0"
+            opacity={0.18}
+          />
+        </G>
+      )}
     </G>
   )
 }

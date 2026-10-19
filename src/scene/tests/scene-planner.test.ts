@@ -471,9 +471,9 @@ test('every seat and the door route to every other seat with valid, exact routes
 })
 
 test('mid-walk retargets keep the exact current point and never cross furniture', () => {
-  const loungeRoutes = [DESK_SEATS[0], DESK_SEATS[5], DESK_SEATS[10], DESK_SEATS[15]]
+  const loungeRoutes = [DESK_SEATS[0], DESK_SEATS[5], DESK_SEATS[8], DESK_SEATS[9]]
   const returnRoutes = [LOUNGE_SEATS[0], LOUNGE_SEATS[3], LOUNGE_SEATS[7], LOUNGE_SEATS[15]]
-  const retargets: Seat[] = [...LOUNGE_SEATS, DESK_SEATS[0], DESK_SEATS[4], DESK_SEATS[8], DESK_SEATS[12]]
+  const retargets: Seat[] = [...LOUNGE_SEATS, DESK_SEATS[0], DESK_SEATS[4], DESK_SEATS[8], DESK_SEATS[9]]
   const fractions = [0.05, 0.1, 0.25, 0.5, 0.75, 0.95]
 
   const routes: Array<{ from: { gx: number; gy: number }; fromKind: 'desk' | 'sofa' | 'cushion'; fromRow?: 1 | 2 | 3; seat: Seat }> = []
@@ -496,7 +496,7 @@ test('mid-walk retargets keep the exact current point and never cross furniture'
       })
     }
   }
-  for (const target of [...LOUNGE_SEATS, DESK_SEATS[0], DESK_SEATS[4], DESK_SEATS[8], DESK_SEATS[12]]) {
+  for (const target of [...LOUNGE_SEATS, DESK_SEATS[0], DESK_SEATS[4], DESK_SEATS[8], DESK_SEATS[9]]) {
     routes.push({ from: DOOR, fromKind: 'desk', seat: target })
   }
 
@@ -1047,9 +1047,12 @@ test('render geometry and routing footprints share their spec objects and cover 
     const chair = DESK_CHAIR_BOXES[index]
     assert.ok(OBSTACLES.includes(monitor))
     assert.ok(OBSTACLES.includes(chair))
-    assert.ok(monitor.d >= 0.68, 'monitor footprint includes the keyboard')
+    // Keyboard moved onto the slab: starts at +0.40, ends at +0.62 (formerly +0.68).
+    assert.ok(monitor.d >= 0.62, 'monitor footprint includes the keyboard')
     assert.ok(monitor.gx <= seat.gx - 0.32 && monitor.gx + monitor.w >= seat.gx + 0.32)
-    assert.ok(monitor.gy + monitor.d >= monitor.gy + 0.48 + 0.2 - 1e-9)
+    assert.ok(monitor.gy + monitor.d >= monitor.gy + 0.4 + 0.22 - 1e-9)
+    const bench = DESK_BENCHES[(seat.row ?? 1) - 1]
+    assert.ok(monitor.gy >= bench.gy && monitor.gy + monitor.d <= bench.gy + bench.d)
   })
 
   for (const spec of PLANT_SPECS) {

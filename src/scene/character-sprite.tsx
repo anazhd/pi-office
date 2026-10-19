@@ -471,6 +471,15 @@ function DeskBody({
   const handBob = relaxing ? 0 : typeBeat * 0.9
   return (
     <G transform={`translate(0 ${bob - lean * 0.9})`}>
+      {/* Occupied seat/back belong to this sprite; furniture renders only the chair base.
+          Geometry is shared through CHAIR_SEAT_LOCAL / CHAIR_BACK_LOCAL. */}
+      <Polygon
+        points={CHAIR_SEAT_LOCAL.top}
+        fill={shade(chair.top, -10)}
+        stroke="#2A2119"
+        strokeOpacity={0.32}
+        strokeWidth={0.5}
+      />
       {/* back of the shirt: shoulders slightly rounded, no collar or lanyard */}
       <Path
         d="M -11 -33 Q -11.5 -41 0 -41.4 Q 11.5 -41 11 -33 L 11 -20 Q 0 -17 -11 -20 Z"
@@ -512,15 +521,7 @@ function DeskBody({
         opacity={0.16}
       />
 
-      {/* the chair we are sitting in is between us and the worker: draw it last.
-          It sits in the worker's shadow, so it is a shade darker than the empty chairs. */}
-      <Polygon
-        points={CHAIR_SEAT_LOCAL.top}
-        fill={shade(chair.top, -10)}
-        stroke="#2A2119"
-        strokeOpacity={0.32}
-        strokeWidth={0.5}
-      />
+      {/* Only the low, near chair back covers the worker's lower torso. */}
       <G>
         <Polygon
           points={CHAIR_BACK_LOCAL.left}

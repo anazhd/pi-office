@@ -10,7 +10,6 @@ export type Box = { gx: number; gy: number; w: number; d: number }
 export const DESK_BENCHES: Box[] = [
   { gx: 0.8, gy: 1.14, w: 6.2, d: 0.7 },
   { gx: 0.8, gy: 3.3, w: 6.2, d: 0.7 },
-  { gx: 1.0, gy: 6.7, w: 5.75, d: 0.7 },
 ]
 
 export type DeskSeatSpec = {
@@ -21,29 +20,31 @@ export type DeskSeatSpec = {
   facing: 'up' | 'right' | 'left'
 }
 
-/** Seat centres shared by layout.ts (sprites) and the chair/monitor footprints. */
-export const DESK_SEAT_SPECS: DeskSeatSpec[] = [
-  { id: 'd1', gx: 1.35, gy: 2.35, row: 1, facing: 'up' },
-  { id: 'd2', gx: 2.55, gy: 2.35, row: 1, facing: 'up' },
-  { id: 'd3', gx: 3.75, gy: 2.35, row: 1, facing: 'up' },
-  { id: 'd4', gx: 4.95, gy: 2.35, row: 1, facing: 'up' },
-  { id: 'd5', gx: 6.15, gy: 2.35, row: 1, facing: 'up' },
-  { id: 'd6', gx: 1.35, gy: 4.5, row: 2, facing: 'up' },
-  { id: 'd7', gx: 2.55, gy: 4.5, row: 2, facing: 'up' },
-  { id: 'd8', gx: 3.75, gy: 4.5, row: 2, facing: 'up' },
-  { id: 'd9', gx: 4.95, gy: 4.5, row: 2, facing: 'up' },
-  { id: 'd10', gx: 6.15, gy: 4.5, row: 2, facing: 'up' },
-  { id: 'd11', gx: 1.3, gy: 7.9, row: 3, facing: 'up' },
-  { id: 'd12', gx: 2.28, gy: 7.9, row: 3, facing: 'up' },
-  { id: 'd13', gx: 3.26, gy: 7.9, row: 3, facing: 'up' },
-  { id: 'd14', gx: 4.24, gy: 7.9, row: 3, facing: 'up' },
-  { id: 'd15', gx: 5.22, gy: 7.9, row: 3, facing: 'up' },
-  { id: 'd16', gx: 6.2, gy: 7.9, row: 3, facing: 'up' },
-]
+/**
+ * Seat centres shared by layout.ts (sprites) and the chair/monitor footprints. Desk capacity is
+ * 10 (two benches, five seats each). The seat is `DESK_SEAT_GAP` tiles past the bench front edge,
+ * so the chair is pushed in against the desk and its back faces the viewer. `row` keeps the
+ * `3` variant only so older type unions still compile; no seat uses it.
+ */
+export const DESK_SEAT_GAP = 0.38
 
-/** The monitor, keyboard and desk clutter move together. The depth includes the keyboard. */
+export const DESK_SEAT_SPECS: DeskSeatSpec[] = [0, 1].flatMap((rowIndex) => {
+  const bench = DESK_BENCHES[rowIndex]
+  return [1.35, 2.55, 3.75, 4.95, 6.15].map((gx, i) => ({
+    id: `d${rowIndex * 5 + i + 1}`,
+    gx,
+    gy: Number((bench.gy + bench.d + DESK_SEAT_GAP).toFixed(3)),
+    row: (rowIndex + 1) as 1 | 2,
+    facing: 'up' as const,
+  }))
+})
+
+/**
+ * The monitor, keyboard and desk clutter move together. They sit ON the bench top: the box
+ * lies fully inside the bench footprint, so nothing hangs past the edge.
+ */
 export function deskMonitorBox(seat: Point): Box {
-  return { gx: seat.gx - 0.45, gy: seat.gy - 0.86, w: 0.9, d: 0.68 }
+  return { gx: seat.gx - 0.5, gy: seat.gy - DESK_SEAT_GAP - 0.68, w: 1.0, d: 0.66 }
 }
 
 /** Seat cushion, back and legs; the final sit-down step may enter this box. */

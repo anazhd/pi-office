@@ -36,7 +36,7 @@ export type Seat = {
   gx: number
   gy: number
   kind: SeatKind
-  /** Desk rows: 1 and 2 are the hot-desk benches, 3 is the overflow bench in the south-west room. */
+  /** Desk rows: 1 and 2 are the two hot-desk benches. (3 is retired; kept only in the type.) */
   row?: 1 | 2 | 3
   /** Facing direction for sprites that care (desk work faces the monitor). */
   facing: 'up' | 'right' | 'left'
@@ -49,9 +49,9 @@ export const WEST_AISLE_X = 0.5
 export const EAST_AISLE_X = 7.5
 /** Walkway column from the entrance up to the corridor. Overflow traffic shares it. */
 export const ENTRY_LANE_X = 6.9
-/** Lane south of the overflow chairs; overflow workers enter and leave their chairs here. */
+/** Open lane across the freed south-west floor (the old third bench row). */
 export const OVERFLOW_LANE_Y = 8.6
-/** Standing spots for workers beyond desk capacity. */
+/** Standing spots for workers beyond desk capacity sit between the benches and the door. */
 export const STANDING_LANE_Y = 9.3
 
 export const DESK_SEATS: Seat[] = DESK_SEAT_SPECS.map((seat) => ({
@@ -59,7 +59,7 @@ export const DESK_SEATS: Seat[] = DESK_SEAT_SPECS.map((seat) => ({
   kind: 'desk',
 }))
 
-/** Total hot-desk capacity. Workers beyond this stand at STANDING_SPOTS. */
+/** Total hot-desk capacity (10: two benches of five). Workers beyond this stand at the standing spots. */
 export const DESK_CAPACITY = DESK_SEATS.length
 
 export const LOUNGE_SEATS: Seat[] = [
@@ -114,16 +114,6 @@ export function standingSeatFor(index: number): Seat {
 }
 
 /**
- * Painter depth for a character at a seat. Lounge seats sit on (or in) furniture
- * that spans several tiles, so they need to draw after the whole seat/back piece.
- * Desk workers get a large boost so the next desk row's monitors and chairs cannot
- * cover them; visibility wins over strict isometric ordering.
- */
-export function seatDepth(seat: Seat): number {
-  return seat.kind === 'desk' ? seat.gx + seat.gy + 7.0 : seat.gx + seat.gy + 2.2
-}
-
-/**
  * Every seat has an explicit approach portal in a clear lane. The short leg from the
  * portal to the seat (and back) is the only place a route may enter that seat's own
  * furniture. Standing spots have no furniture, so their portal is the spot itself.
@@ -134,7 +124,7 @@ const SEAT_PORTALS: Record<string, Point> = {
       seat.id,
       {
         gx: seat.gx,
-        gy: seat.row === 1 ? 3.05 : seat.row === 2 ? 5.4 : 8.6,
+        gy: seat.row === 1 ? 3.05 : 5.4,
       },
     ]),
   ),
