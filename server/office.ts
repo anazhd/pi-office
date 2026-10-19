@@ -2,8 +2,9 @@
 import type { ActivityStatus, Character, OfficeSnapshot } from '../shared/office-types.ts'
 import type { RosterEntry } from './parse.ts'
 
-/** A session that has not been written to for this long is considered crashed -> idle. */
+/** Inference leases, not proof of process exit. Silent tools get a longer conservative window. */
 export const STALE_MS = 10 * 60_000
+export const TOOL_STALE_MS = 60 * 60_000
 
 /** Gamification thresholds. */
 export const XP_PER_LEVEL = 2000
@@ -49,7 +50,7 @@ export type SessionView = {
   tool: string | null
   /** Epoch ms of the last relevant line. */
   since: number
-  /** File mtime, epoch ms (used for the stale timeout). */
+  /** File mtime, epoch ms (reader metadata only; never evidence of work). */
   mtime: number
   provider: string | null
   model: string | null
@@ -66,7 +67,8 @@ export type SnapshotInput = {
 export function effectiveStatus(session: SessionView, now: number): ActivityStatus {
   if (session.status === 'idle') return 'idle'
   if (!session.provider || !session.model) return 'idle'
-  if (!(now - session.mtime <= STALE_MS)) return 'idle'
+  const lease = session.status === 'tool' ? TOOL_STALE_MS : STALE_MS
+  if (!(session.since > 0 && now - session.since <= lease)) return 'idle'
   return session.status
 }
 

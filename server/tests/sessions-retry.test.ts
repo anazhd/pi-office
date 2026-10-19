@@ -157,7 +157,7 @@ test('retry: a failed read of an appended user line restores the activity status
     assert.equal(store.snapshot().totals.activeSessions, 0, 'the user line is not consumed yet')
 
     await store.refresh()
-    assert.equal(store.snapshot().totals.activeSessions, 1, 'the retry consumes it and the session is working')
+    assert.equal(store.snapshot(T0).totals.activeSessions, 1, 'the retry consumes it and the session is working at its event time')
   })
 })
 

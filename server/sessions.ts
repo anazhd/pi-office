@@ -388,7 +388,7 @@ export class OfficeStore {
         project: fs.state.project ?? 'unknown',
         status: fs.state.status,
         tool: fs.state.tool,
-        since: fs.state.lastTs || fs.mtime,
+        since: fs.state.lastTs,
         mtime: fs.mtime,
         provider: fs.state.provider,
         model: fs.state.model,

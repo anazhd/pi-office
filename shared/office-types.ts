@@ -2,7 +2,7 @@
 
 export type ActivityStatus = 'idle' | 'thinking' | 'tool'
 
-/** One active Pi session currently driving a character. */
+/** One inferred active Pi session currently driving a character (bounded inactivity lease). */
 export type ActiveSession = {
   /** Short stable hash of the session id (never the raw path). */
   key: string
@@ -11,7 +11,7 @@ export type ActiveSession = {
   status: Exclude<ActivityStatus, 'idle'>
   /** Tool name when status === 'tool', else null. Name only, never arguments. */
   tool: string | null
-  /** Epoch ms of the last line written in that session. */
+  /** Epoch ms of the last relevant activity event, not file modification time. */
   since: number
 }
 

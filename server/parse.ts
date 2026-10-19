@@ -6,7 +6,7 @@
 //   model_change       -> provider + modelId
 //   message/user       -> a turn started (model is thinking)
 //   message/assistant  -> a finished reply (with usage + stopReason + toolCalls) -> roster sample
-//   message/toolResult -> a tool finished (model is thinking again)
+//   message/toolResult -> a tool finished (inferred continuation only in an open turn)
 // Everything else (session_info, custom, system, thinking_level_change, ...) is ignored. In particular
 // session_info names and any message content must never leave this module.
 import { createHash } from 'node:crypto'
@@ -38,7 +38,7 @@ export type SessionEvent =
   | { kind: 'session'; id: string; project: string; ts: number }
   | { kind: 'modelChange'; provider: string; model: string; ts: number }
   | { kind: 'user'; ts: number }
-  | { kind: 'toolResult'; toolName: string | null; ts: number }
+  | { kind: 'toolResult'; toolName: string | null; isError?: boolean; ts: number }
   | {
       kind: 'assistant'
       provider: string | null
@@ -92,7 +92,7 @@ export function parseEvent(line: string): SessionEvent | null {
       const ts = lineTs ?? epochMs(m.timestamp) ?? 0
       if (m.role === 'user') return { kind: 'user', ts }
       if (m.role === 'toolResult') {
-        return { kind: 'toolResult', toolName: str(m.toolName), ts }
+        return { kind: 'toolResult', toolName: str(m.toolName), ...(m.isError === true ? { isError: true } : {}), ts }
       }
       if (m.role !== 'assistant') return null
 
@@ -187,9 +187,10 @@ export function emptyState(): SessionState {
 }
 
 /**
- * Apply one event to the session state (mutates, for tailing efficiency). The status table is the one from
- * the spec: user/toolResult -> thinking, assistant toolUse -> tool, any other assistant ending -> idle,
- * header/model_change only -> idle.
+ * Apply one event to the session state (mutates, for tailing efficiency).
+ * Idle closes inferred activity: trailing results cannot reopen it. A user or a new assistant toolUse
+ * can resume work (including automatic retry/continuation without a new user message).
+ * Failed tool results are not proof of an agent exit, but cease inferred work until such continuation.
  *
  * Returns the compact roster record when the event added one (the I/O layer feeds it to the incremental
  * aggregator), otherwise null.
@@ -199,7 +200,6 @@ export function applyEvent(state: SessionState, event: SessionEvent): CompactCon
     case 'session': {
       state.id = event.id
       state.project = event.project
-      state.lastTs = Math.max(state.lastTs, event.ts)
       return null
     }
     case 'modelChange': {
@@ -207,7 +207,6 @@ export function applyEvent(state: SessionState, event: SessionEvent): CompactCon
       state.model = event.model
       state.status = 'idle'
       state.tool = null
-      state.lastTs = Math.max(state.lastTs, event.ts)
       return null
     }
     case 'user': {
@@ -217,7 +216,8 @@ export function applyEvent(state: SessionState, event: SessionEvent): CompactCon
       return null
     }
     case 'toolResult': {
-      state.status = 'thinking'
+      if (state.status === 'idle') return null
+      state.status = event.isError ? 'idle' : 'thinking'
       state.tool = null
       state.lastTs = Math.max(state.lastTs, event.ts)
       return null

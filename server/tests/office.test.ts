@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   STALE_MS,
+  TOOL_STALE_MS,
   buildOfficeSnapshot,
   effectiveStatus,
   levelForXp,
@@ -81,10 +82,13 @@ test('titles by level band', () => {
 })
 
 test('effectiveStatus: stale timeout applies to non-idle sessions only', () => {
-  assert.equal(effectiveStatus(session({ mtime: NOW - 1000 }), NOW), 'thinking')
-  assert.equal(effectiveStatus(session({ mtime: NOW - STALE_MS + 1 }), NOW), 'thinking')
-  assert.equal(effectiveStatus(session({ mtime: NOW - STALE_MS - 1 }), NOW), 'idle')
-  assert.equal(effectiveStatus(session({ status: 'tool', tool: 'bash', mtime: NOW - STALE_MS - 1 }), NOW), 'idle')
+  assert.equal(effectiveStatus(session({ since: NOW - 1000 }), NOW), 'thinking')
+  assert.equal(effectiveStatus(session({ since: NOW - STALE_MS + 1 }), NOW), 'thinking')
+  assert.equal(effectiveStatus(session({ since: NOW - STALE_MS - 1, mtime: NOW }), NOW), 'idle')
+  assert.equal(effectiveStatus(session({ status: 'tool', tool: 'bash', since: NOW - TOOL_STALE_MS - 1 }), NOW), 'idle')
+  // A genuinely ongoing silent tool must not expire on the shorter LLM lease.
+  assert.equal(effectiveStatus(session({ status: 'tool', tool: 'bash', since: NOW - STALE_MS - 1 }), NOW), 'tool')
+  assert.equal(effectiveStatus(session({ since: 0, mtime: NOW }), NOW), 'idle')
   // idle stays idle regardless of mtime
   assert.equal(effectiveStatus(session({ status: 'idle', mtime: NOW }), NOW), 'idle')
   // no model -> cannot be working
@@ -179,7 +183,7 @@ test('snapshot: stale and model-less sessions do not count as active', () => {
   const snap = buildOfficeSnapshot({
     now: NOW,
     sessions: [
-      session({ key: 'stale', mtime: NOW - STALE_MS * 2 }),
+      session({ key: 'stale', since: NOW - STALE_MS * 2, mtime: NOW }),
       session({ key: 'nomodel', provider: null, model: null }),
       session({ key: 'idle', status: 'idle' }),
     ],

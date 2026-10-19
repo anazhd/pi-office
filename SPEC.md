@@ -70,21 +70,38 @@ Relevant line types (one JSON object per line):
   - `"assistant"` with `provider`, `model`, `stopReason` (`"toolUse" | "stop" | "error" | "aborted" | "length"`),
     `usage {input, output, cacheRead, cacheWrite}`, `durationMs`, `content[]` (items with `type:"toolCall", name`).
     Assistant lines are written only when that reply finishes.
-  - `"toolResult"` with `toolName` → tool finished; model is generating again.
+  - `"toolResult"` with `toolName`, optional `isError` → tool finished; infer continuation only in an open turn.
 - other types (`custom`, ...) → ignore.
 
-Per-session status (derived from the last relevant line + file mtime):
+Per-session status (derived from relevant message events, never file mtime):
 
 | last relevant line                         | status      | activity                          |
 |--------------------------------------------|-------------|-----------------------------------|
 | user message                               | `thinking`  | –                                 |
-| toolResult                                 | `thinking`  | –                                 |
+| successful toolResult in open turn         | `thinking`  | inferred continuation             |
+| failed toolResult (`isError`)               | idle        | until user/assistant continuation |
+| toolResult after idle/terminal reply        | idle        | cannot reopen a terminated turn   |
 | assistant stopReason `toolUse`             | `tool`      | `tool` = last toolCall name       |
 | assistant `stop`/`error`/`aborted`/`length`| idle        |                                   |
 | model_change / header only                 | idle        |                                   |
 
-A non-idle session becomes idle when its file has not been modified for `STALE_MS = 10 min` (crashed/killed pi).
+A terminal assistant reply (`stop`, `error`, `aborted`, `length`) closes inferred work immediately;
+trailing tool results cannot revive it. A new user message or assistant `toolUse` continuation resumes work,
+including retries without a new user message. Failed tool results cease inferred work, but are not proof that
+the agent exited: a later assistant continuation can recover. Failures remain lifetime stats, not working badges.
+Each session is reduced independently; another active session of the same model still keeps the model working.
+
+JSONL cannot prove whether a silent tool/LLM is alive. Use a conservative inactivity lease from the last relevant
+activity event timestamp: `STALE_MS = 10 min` for thinking (including successful tool results awaiting an assistant),
+`TOOL_STALE_MS = 60 min` for tool execution. Missing timestamps expire, never fall back to mtime. Title/custom
+entries, touches and unrelated metadata updates cannot renew work. These leases are inference, not exact liveness:
+a killed process can look active until expiry, and a real tool silent for over an hour can look idle. No Pi writes,
+hooks, extensions or historical-log edits. Runtime inspection found T3 uses embedded Pi in generic Node workers
+without exact session IDs in argv; process presence cannot safely renew a session. Pi `agent_end`/`turn_end` are
+runtime events, not persisted lifecycle entries; arbitrary custom entries must not be interpreted as termination.
 The session's model = provider/model of last assistant message, overridden by any later `model_change`.
+The existing client 20-second desk grace applies to all idle transitions, including errors: badges stop immediately,
+then the character returns to coffee after the bounded grace (no extra terminal status is sent to the client).
 
 **Roster** (lifetime): every distinct `provider + "/" + model` seen in any assistant message (successful or not),
 plus models from model_change that have at least one assistant message. Aggregate per character: `messages`,

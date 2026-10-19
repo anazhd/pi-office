@@ -85,6 +85,19 @@ server/, scripts/           read-only data server and systemd installer
 - Desks are assigned first-free while a model has active sessions and released when it goes idle. Lounge seats
   are stable by first-seen order.
 
+## Activity inference
+
+Terminal assistant replies (including errors/aborts) end inferred work; trailing tool results cannot revive them.
+Failed tool results also stop inferred work until a new user/assistant continuation. Concurrent sessions are
+independent: one failure does not stop another active session of the same model. Errors still count in stats.
+
+Logs do not prove process liveness. Unfinished work expires from the last relevant event timestamp, **not file
+mtime**: 10 minutes for thinking, 60 minutes for silent tool execution. Unrelated title/custom updates cannot
+renew historical work. T3's embedded Pi workers do not provide verified exact-session process liveness via argv;
+no lifecycle hooks are installed. A killed run can remain inferred active until expiry; a tool silent beyond an
+hour can be falsely idle. See `SPEC.md`. The scene keeps its normal 20-second desk grace before returning to coffee,
+including on errors; working badges clear immediately.
+
 ## Read-only guarantee
 
 - No inputs write anywhere. The only interaction is selecting a character/roster card (read-only stats).
