@@ -11,6 +11,13 @@ Read-only isometric “window into Pi”. See `README.md` for the product and `S
 - Check status: `systemctl --user status pi-office`, logs: `journalctl --user -u pi-office`.
 - Confirm with `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6702/` → `200`.
 
+## Browser testing
+
+- Use the lightweight native Rust `agent-browser` CLI, not direct Playwright.
+- First-time browser setup: `npx agent-browser install` (Linux libraries if needed: `npx agent-browser install --with-deps`).
+- Run `npm run test:browser` against the existing service on :6702, or set `OFFICE_BROWSER_URL=http://127.0.0.1:8081/` for an already-running dev server.
+- The smoke test is read-only, uses an isolated session, and closes it on completion. Do not wait for networkidle: the office uses SSE.
+
 ## Before finishing
 
 - `npm run check` (typecheck + server tests + `expo export -p web`).
