@@ -5,7 +5,7 @@ import { Backdrop } from './backdrop'
 import { CharacterSprite, CharacterTag } from './character-sprite'
 import { sortBackToFront } from './depth'
 import { buildFurniture } from './furniture'
-import { characterBounds, furnitureContaining, seatFurnitureKeys } from './furniture-bounds'
+import { armchairForegroundKeys, characterBounds, furnitureContaining, seatFurnitureKeys } from './furniture-bounds'
 import { VIEWBOX } from './iso'
 import { SpeechBubble } from './speech-bubble'
 import type { SceneItem } from './types'
@@ -45,7 +45,7 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
     // Camera-side solid panels cover the occupant; only the base/cushion and far arm
     // belong behind it. Feet beyond the open west edge remain unobstructed.
     if (!scene.walking && scene.seat.kind === 'armchair') {
-      for (const key of seatFurnitureKeys(scene.seat, scene.deskIndex).filter((key) => /-(front|back)$/.test(key))) {
+      for (const key of armchairForegroundKeys(scene.seat)) {
         own.delete(key)
         const panel = items.find((item) => item.key === key)
         if (panel) panel.after = [...(panel.after ?? []), `char-${scene.char.id}`]

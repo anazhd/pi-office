@@ -37,6 +37,17 @@ export function sofaArmBounds(end: 'back' | 'front'): Bounds3 {
   return boundsOf({ gx: SOFA.gx, gy, w: SOFA.w, d: SOFA_ARM_D }, 0, 45)
 }
 
+/** Lower upholstery faces are solid too; the cushion/top stays behind the sitter. */
+export function armchairBaseBox(box: Box): Box {
+  return inset(box, 0, 0.12, 0, 0)
+}
+
+export function armchairForegroundKeys(seat: { id: string; kind: string }): string[] {
+  if (seat.kind !== 'armchair') return []
+  const key = seat.id === 'l4' ? 'armchair-1' : 'armchair-2'
+  return [`${key}-shell`, `${key}-front`, `${key}-back`]
+}
+
 export function armchairFrontBox(box: Box): Box {
   return inset(box, 0, 0.12, box.d - 0.15, 0)
 }
@@ -60,6 +71,7 @@ export function furnitureBounds(): BoundedKey[] {
     [2, F.armchairSouth],
   ] as const) {
     add(`armchair-${n}`, boundsOf(inset(box, 0, BACK_W, 0, 0.15), 0, 42))
+    add(`armchair-${n}-shell`, boundsOf(armchairBaseBox(box), 0, 20))
     add(`armchair-${n}-front`, boundsOf(armchairFrontBox(box), 20, 42))
     add(`armchair-${n}-back`, boundsOf(inset(box, box.w - BACK_W, 0, 0, 0), 20, 50))
   }
@@ -110,9 +122,9 @@ export function seatFurnitureKeys(seat: { id: string; kind: string }, deskIndex:
     case 'l3':
       return [`sofa-${Number(seat.id.slice(1)) - 1}`]
     case 'l4':
-      return ['armchair-1', 'armchair-1-front', 'armchair-1-back']
+      return ['armchair-1', ...armchairForegroundKeys(seat)]
     case 'l5':
-      return ['armchair-2', 'armchair-2-front', 'armchair-2-back']
+      return ['armchair-2', ...armchairForegroundKeys(seat)]
     case 'l6':
     case 'l7':
     case 'l8':

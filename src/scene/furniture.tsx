@@ -11,7 +11,7 @@ import {
 import { iso, isoPoints, floorPolygon, hashIndex, TILE_H, TILE_W } from './iso'
 import { DESK_BENCHES, DESK_SEATS, type Seat } from './layout'
 import { FURNITURE_FOOTPRINTS, type Box } from './footprints'
-import { armchairFrontBox, FURNITURE_BOUNDS, SOFA_SEGMENTS, SOFA_ARM_D } from './furniture-bounds'
+import { armchairBaseBox, armchairFrontBox, FURNITURE_BOUNDS, SOFA_SEGMENTS, SOFA_ARM_D } from './furniture-bounds'
 import type { SceneItem } from './types'
 
 type BoxColors = { top: string; left: string; right: string }
@@ -26,6 +26,7 @@ function Box({
   colors,
   stroke,
   strokeOpacity = 0,
+  faces = 'all',
 }: {
   gx: number
   gy: number
@@ -36,6 +37,7 @@ function Box({
   colors: BoxColors
   stroke?: string
   strokeOpacity?: number
+  faces?: 'all' | 'top' | 'sides'
 }) {
   const zt = z0 + h
   const top = isoPoints([
@@ -58,15 +60,17 @@ function Box({
   ])
   return (
     <G>
-      <Polygon points={left} fill={colors.left} />
-      <Polygon points={right} fill={colors.right} />
-      <Polygon
+      {faces !== 'top' ? <>
+        <Polygon points={left} fill={colors.left} />
+        <Polygon points={right} fill={colors.right} />
+      </> : null}
+      {faces !== 'sides' ? <Polygon
         points={top}
         fill={colors.top}
         stroke={stroke}
         strokeOpacity={strokeOpacity}
         strokeWidth={0.8}
-      />
+      /> : null}
     </G>
   )
 }
@@ -136,9 +140,11 @@ export function buildFurniture(
   const southOttoman = FURNITURE_FOOTPRINTS.ottomanSouth
 
   add('armchair-1', <ArmchairBase box={northArm} />)
+  add('armchair-1-shell', <Box {...armchairBaseBox(northArm)} h={20} colors={RUST} faces="sides" />)
   add('armchair-1-front', <ArmchairFront box={northArm} />)
   add('armchair-1-back', <ArmchairBack box={northArm} />)
   add('armchair-2', <ArmchairBase box={southArm} />)
+  add('armchair-2-shell', <Box {...armchairBaseBox(southArm)} h={20} colors={RUST} faces="sides" />)
   add('armchair-2-front', <ArmchairFront box={southArm} />)
   add('armchair-2-back', <ArmchairBack box={southArm} />)
   add('coffee-table', <CoffeeTable now={now} />)
@@ -670,7 +676,7 @@ function ArmchairBase({ box }: { box: Box }) {
   return (
     <G>
       <Shadow gx={gx + w / 2} gy={gy + d / 2} rx={34} ry={18} />
-      <Box gx={gx} gy={gy} w={w - 0.12} d={d} z0={0} h={20} colors={RUST} />
+      <Box {...armchairBaseBox(box)} z0={0} h={20} colors={RUST} faces="top" />
       <Box
         gx={gx}
         gy={gy}
