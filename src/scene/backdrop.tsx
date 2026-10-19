@@ -13,6 +13,7 @@ import {
   Text as SvgText,
 } from 'react-native-svg'
 import { floorPolygon, iso, isoPoints, WALL_H } from './iso'
+import { LEFT_WINDOWS, RIGHT_WINDOWS, OPS_BOARD, SKY_ORB_WINDOW, rightWallTransform, type WindowSpec } from './wall-art'
 
 const WOOD_TILES = ['#7A5D48', '#84664D', '#735745', '#7D6048']
 const SKEW = 26.565
@@ -31,20 +32,6 @@ function skyPalette(now: number) {
   }
   return { top: '#101A31', mid: '#1B2743', bottom: '#2B3A56', orb: '#EFE6CF', night: true }
 }
-
-type WindowSpec = { start: number; length: number }
-
-const RIGHT_WINDOWS: WindowSpec[] = [
-  { start: 1.0, length: 2.7 },
-  { start: 4.3, length: 2.7 },
-  { start: 11.0, length: 2.3 },
-]
-
-const LEFT_WINDOWS: WindowSpec[] = [
-  { start: 1.2, length: 2.6 },
-  { start: 4.5, length: 2.6 },
-  { start: 9.0, length: 1.6 },
-]
 
 export function Backdrop({ activeSessions, now }: { activeSessions: number; now: number }) {
   const sky = skyPalette(now)
@@ -252,12 +239,14 @@ function RightWindow({
       />
       <G clipPath={`url(#winR${index})`}>
         <Skyline x1={p1.x} x2={p2.x} y1={p1.y} y2={p2.y} night={sky.night} />
+        {index === SKY_ORB_WINDOW.index ? <G>
         <Circle cx={orb.x} cy={orb.y} r={sky.night ? 8 : 10} fill={sky.orb} opacity={sky.night ? 0.85 : 0.7} />
         {!sky.night ? (
           <Circle cx={orb.x} cy={orb.y} r={19} fill={sky.orb} opacity={0.13} />
         ) : (
           <Circle cx={orb.x - 3} cy={orb.y - 2} r={7} fill={sky.top} opacity={0.35} />
         )}
+        </G> : null}
         {sky.night
           ? [0, 1, 2, 3, 4].map((i) => (
               <Circle
@@ -319,7 +308,6 @@ function LeftWindow({
   const mty = (t1.y + t2.y) / 2
   const midZ = iso(0, start, 109)
   const midZ2 = iso(0, start + length, 109)
-  const orb = iso(0, start + length * 0.32, 133)
 
   return (
     <G>
@@ -329,8 +317,6 @@ function LeftWindow({
       />
       <G clipPath={`url(#winL${index})`}>
         <Skyline x1={p1.x} x2={p2.x} y1={p1.y} y2={p2.y} night={sky.night} />
-        <Circle cx={orb.x} cy={orb.y} r={sky.night ? 7 : 9} fill={sky.orb} opacity={sky.night ? 0.8 : 0.65} />
-        {sky.night ? <Circle cx={orb.x - 2} cy={orb.y - 1} r={6} fill={sky.top} opacity={0.35} /> : null}
       </G>
       <Polygon
         points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${t2.x},${t2.y} ${t1.x},${t1.y}`}
@@ -407,24 +393,15 @@ function Skyline({
 }
 
 function OpsBoard({ active }: { active: number }) {
-  const p1 = iso(8.05, 0, 78)
-  const p2 = iso(9.95, 0, 78)
-  const t1 = iso(8.05, 0, 156)
-  const t2 = iso(9.95, 0, 156)
-  const cx = (p1.x + p2.x) / 2
-  const cy = (p1.y + p2.y) / 2
+  const { gx, z, width, height } = OPS_BOARD
   return (
-    <G>
-      <Polygon
-        points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${t2.x},${t2.y} ${t1.x},${t1.y}`}
-        fill="#241E18"
-        stroke="#8A7358"
-        strokeWidth={2.2}
-      />
-      <G transform={`translate(${cx} ${cy}) skewY(${SKEW})`}>
+    <G transform={rightWallTransform(gx, z)}>
+      <Rect x={-width / 2} y={-height / 2} width={width} height={height}
+        fill="#241E18" stroke="#8A7358" strokeWidth={2.2} />
+      <G>
         <SvgText
           x={0}
-          y={-30}
+          y={-23}
           textAnchor="middle"
           fontSize={7}
           letterSpacing={2}
@@ -435,9 +412,9 @@ function OpsBoard({ active }: { active: number }) {
         </SvgText>
         <SvgText
           x={0}
-          y={1}
+          y={5}
           textAnchor="middle"
-          fontSize={24}
+          fontSize={26}
           fontFamily="Fraunces_600SemiBold"
           fill="#F3C57A"
         >
@@ -445,7 +422,7 @@ function OpsBoard({ active }: { active: number }) {
         </SvgText>
         <SvgText
           x={0}
-          y={14}
+          y={19}
           textAnchor="middle"
           fontSize={6.6}
           fontFamily="DMSans_500Medium"
@@ -457,7 +434,7 @@ function OpsBoard({ active }: { active: number }) {
           <Rect
             key={i}
             x={-26 + i * 14}
-            y={24}
+            y={28}
             width={9}
             height={3}
             rx={1.5}
@@ -470,13 +447,12 @@ function OpsBoard({ active }: { active: number }) {
 }
 
 function WallClock({ hourAngle, minuteAngle }: { hourAngle: number; minuteAngle: number }) {
-  const center = iso(7.1, 0, 118)
   const hx = Math.sin(hourAngle) * 7
   const hy = -Math.cos(hourAngle) * 7
   const mx = Math.sin(minuteAngle) * 10
   const my = -Math.cos(minuteAngle) * 10
   return (
-    <G transform={`translate(${center.x} ${center.y}) skewY(${SKEW})`}>
+    <G transform={rightWallTransform(7.5, 118)}>
       <Circle cx={0} cy={0} r={17} fill="#2D241C" stroke="#8A7358" strokeWidth={2} />
       <Circle cx={0} cy={0} r={13.5} fill="#EFE6D5" opacity={0.92} />
       <Line x1={0} y1={0} x2={hx} y2={hy} stroke="#33281F" strokeWidth={2.2} strokeLinecap="round" />
