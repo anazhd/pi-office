@@ -42,7 +42,6 @@ import {
 } from '../footprints.ts'
 import { OBSTACLES } from '../routing-obstacles.ts'
 import {
-  DESK_GRACE_MS,
   headingAlongPath,
   initialPlannerState,
   MIN_HEADING_SEGMENT,
@@ -50,8 +49,9 @@ import {
   step,
   type Plan,
 } from '../scene-planner.ts'
+import { DESK_GRACE_MS } from '../../../shared/desk-allocation.ts'
 
-function character(id: string, status: ActivityStatus = 'idle'): Character {
+function character(id: string, status: ActivityStatus = 'idle', desk: number | null = null): Character {
   return {
     id,
     provider: id.split('/')[0] ?? 'test',
@@ -72,12 +72,36 @@ function character(id: string, status: ActivityStatus = 'idle'): Character {
     xp: 1000,
     levelProgress: 0,
     status,
+    desk,
     active: [],
   }
 }
 
-function snapshot(entries: Array<[string, ActivityStatus]>, now: number): OfficeSnapshot {
-  const characters = entries.map(([id, status]) => character(id, status))
+/**
+ * Snapshot with the server's desk assignment. Stand-in for a fresh office: working characters take the
+ * lowest free desks in roster order. Explicit `desks` override it. The planner itself never assigns desks;
+ * allocation rules are covered by server/tests/desks.test.ts.
+ */
+function snapshot(
+  entries: Array<[string, ActivityStatus]>,
+  now: number,
+  desks?: Record<string, number | null>,
+): OfficeSnapshot {
+  const taken = new Set<number>()
+  const characters = entries.map(([id, status]) => {
+    let desk: number | null = null
+    if (desks && id in desks) desk = desks[id]
+    else if (status !== 'idle') {
+      for (let i = 0; i < DESK_SEATS.length; i++) {
+        if (!taken.has(i)) {
+          desk = i
+          break
+        }
+      }
+    }
+    if (desk != null) taken.add(desk)
+    return character(id, status, desk)
+  })
   return {
     now,
     characters,
@@ -152,46 +176,41 @@ test('desk assignments stay unique across many random snapshots', () => {
   }
 })
 
-test('grace keeps a desk for 20s, then the worker walks back to the lounge', () => {
-  const working = character('a/tool', 'tool')
-  const idle = character('a/tool', 'idle')
+
+test('a worker keeps the desk the server reports; once the server releases it, it walks back to the lounge', () => {
   let state = step(initialPlannerState(), snapshot([['a/tool', 'tool']], 0), 0)
   assert.equal(state.desks.get('a/tool'), 0)
 
   const idleAt = 1000
-  const idleSnapshot = snapshot([['a/tool', 'idle']], idleAt)
-  state = step(state, idleSnapshot, idleAt)
+  const holding = snapshot([['a/tool', 'idle']], idleAt, { 'a/tool': 0 })
+  state = step(state, holding, idleAt)
   assert.equal(state.desks.get('a/tool'), 0)
   assert.equal(state.plans.get('a/tool')!.seat.id, DESK_SEATS[0].id)
-  assert.equal(working.status, 'tool')
-  assert.equal(idle.status, 'idle')
 
-  const expiry = idleAt + DESK_GRACE_MS
-  const justBefore = step(state, idleSnapshot, expiry - 1)
-  assert.equal(justBefore, state, 'no churn before the grace window expires')
-  assert.equal(justBefore.desks.get('a/tool'), 0)
+  // No client-side grace timer: while the server keeps reporting the desk, nothing moves.
+  assert.equal(step(state, holding, idleAt + DESK_GRACE_MS * 10), state)
 
-  const atExpiry = step(state, idleSnapshot, expiry)
-  assert.notEqual(atExpiry, state)
-  assert.equal(atExpiry.desks.has('a/tool'), false)
-  const plan = atExpiry.plans.get('a/tool')!
+  const released = snapshot([['a/tool', 'idle']], idleAt + DESK_GRACE_MS, { 'a/tool': null })
+  const next = step(state, released, idleAt + DESK_GRACE_MS)
+  assert.equal(next.desks.has('a/tool'), false)
+  const plan = next.plans.get('a/tool')!
   assert.equal(plan.seat.kind, 'sofa')
-  assert.equal(plan.walkStart, expiry)
+  assert.equal(plan.walkStart, idleAt + DESK_GRACE_MS)
   assert.ok(plan.walkDuration > 0)
   assert.ok(pathLength(plan.path) > 1)
 })
 
-test('reactivation inside the grace window resumes typing at the same desk', () => {
-  let state = step(initialPlannerState(), snapshot([['a/tool', 'tool']], 0), 0)
-  state = step(state, snapshot([['a/tool', 'idle']], 1000), 1000)
-  const desk = state.desks.get('a/tool')
+
+test('reactivation while the server still reports the desk resumes typing at that desk', () => {
+  let state = step(initialPlannerState(), snapshot([['a/tool', 'tool']], 0, { 'a/tool': 4 }), 0)
+  state = step(state, snapshot([['a/tool', 'idle']], 1000, { 'a/tool': 4 }), 1000)
 
   const reactivatedAt = 5000
-  state = step(state, snapshot([['a/tool', 'thinking']], reactivatedAt), reactivatedAt)
+  state = step(state, snapshot([['a/tool', 'thinking']], reactivatedAt, { 'a/tool': 4 }), reactivatedAt)
   const plan = state.plans.get('a/tool')!
-  assert.equal(state.desks.get('a/tool'), desk)
-  assert.equal(plan.deskIndex, desk)
-  assert.equal(plan.seat.id, DESK_SEATS[desk!].id)
+  assert.equal(state.desks.get('a/tool'), 4)
+  assert.equal(plan.deskIndex, 4)
+  assert.equal(plan.seat.id, DESK_SEATS[4].id)
   assert.equal(plan.walkDuration, 0)
   assert.equal(positionAt(plan, reactivatedAt).walking, false)
 })
@@ -243,10 +262,9 @@ test('mid-walk retargeting starts at the current point and never crosses a bench
 
 test('step retargets a mid-walk return from the current point without crossing a bench', () => {
   let state = step(initialPlannerState(), snapshot([['a/tool', 'tool']], 0), 0)
-  const idleSnapshot = snapshot([['a/tool', 'idle']], 1000)
-  state = step(state, idleSnapshot, 1000)
+  state = step(state, snapshot([['a/tool', 'idle']], 1000, { 'a/tool': 0 }), 1000)
   const expiry = 1000 + DESK_GRACE_MS
-  state = step(state, idleSnapshot, expiry)
+  state = step(state, snapshot([['a/tool', 'idle']], expiry, { 'a/tool': null }), expiry)
   const returnPlan = state.plans.get('a/tool')!
   assert.ok(returnPlan.walkDuration > 0)
   assert.equal(returnPlan.seat.kind, 'sofa')
@@ -319,72 +337,47 @@ test('first render places everyone seated without walking', () => {
   assert.equal(state.plans.get('b/idle')!.seat.kind, 'sofa')
 })
 
-test('a removed character frees its desk for the next worker', () => {
+
+test('a departed worker leaves its desk; the next worker sits where the server seats it, and nobody else moves', () => {
   let state = step(
     initialPlannerState(),
-    snapshot(
-      [
-        ['a/tool', 'tool'],
-        ['b/tool', 'tool'],
-      ],
-      0,
-    ),
+    snapshot([['a/tool', 'tool'], ['b/tool', 'tool']], 0, { 'a/tool': 0, 'b/tool': 1 }),
     0,
   )
-  assert.equal(state.desks.get('a/tool'), 0)
-  assert.equal(state.desks.get('b/tool'), 1)
-
   state = step(
     state,
-    snapshot(
-      [
-        ['b/tool', 'tool'],
-        ['c/tool', 'tool'],
-      ],
-      1000,
-    ),
+    snapshot([['b/tool', 'tool'], ['c/tool', 'tool']], 1000, { 'b/tool': 1, 'c/tool': 7 }),
     1000,
   )
   assert.equal(state.plans.has('a/tool'), false)
   assert.equal(state.desks.has('a/tool'), false)
-  assert.equal(state.desks.get('c/tool'), 0)
+  assert.equal(state.desks.get('c/tool'), 7)
+  const b = state.plans.get('b/tool')!
+  assert.equal(b.deskIndex, 1)
+  assert.equal(b.walkDuration, 0, 'b was never moved')
   const deskValues = [...state.desks.values()]
   assert.equal(new Set(deskValues).size, deskValues.length)
 })
 
-test('hot desks are handed out first-free by roster order and stay stable', () => {
-  let state = step(
-    initialPlannerState(),
-    snapshot(
-      [
-        ['a/tool', 'tool'],
-        ['b/idle', 'idle'],
-        ['c/tool', 'tool'],
-      ],
-      0,
-    ),
-    0,
-  )
-  assert.equal(state.desks.get('a/tool'), 0)
-  assert.equal(state.desks.get('c/tool'), 1)
+
+test('the planner never picks a desk itself: a working worker without a server desk waits on a standing spot', () => {
+  const entries: Array<[string, ActivityStatus]> = [
+    ['a/tool', 'tool'],
+    ['b/idle', 'idle'],
+    ['c/tool', 'tool'],
+  ]
+  const desks = { 'a/tool': 7, 'c/tool': null }
+  let state = step(initialPlannerState(), snapshot(entries, 0, desks), 0)
+  assert.equal(state.desks.get('a/tool'), 7)
+  assert.equal(state.plans.get('a/tool')!.seat.id, DESK_SEATS[7].id)
+  assert.equal(state.desks.has('c/tool'), false)
+  assert.equal(state.plans.get('c/tool')!.seat.kind, 'standing')
   assert.equal(state.desks.has('b/idle'), false)
 
-  const first = state.desks.get('a/tool')
-  state = step(
-    state,
-    snapshot(
-      [
-        ['a/tool', 'thinking'],
-        ['b/idle', 'idle'],
-        ['c/tool', 'tool'],
-      ],
-      1000,
-    ),
-    1000,
-  )
-  assert.equal(state.desks.get('a/tool'), first)
+  const again = step(state, snapshot(entries, 1000, desks), 1000)
+  assert.equal(again.plans.get('a/tool')!.seat.id, DESK_SEATS[7].id, 'the seat is the server\'s, not recomputed')
+  assert.equal(again.desks.get('a/tool'), 7)
 })
-
 
 function sameBox(a: Box, b: Box): boolean {
   return (
@@ -562,6 +555,7 @@ test('inserting a new hire at index 0 does not shift sticky lounge seats or tele
         ['b/tool', 'idle'],
       ],
       idleAt,
+      { 'a/tool': 0, 'b/tool': 1 },
     ),
     idleAt,
   )
@@ -573,7 +567,8 @@ test('inserting a new hire at index 0 does not shift sticky lounge seats or tele
         ['a/tool', 'idle'],
         ['b/tool', 'idle'],
       ],
-      idleAt,
+      expiry,
+      { 'a/tool': null, 'b/tool': null },
     ),
     expiry,
   )
@@ -688,6 +683,14 @@ test('planner holds a character in place instead of adopting an unreachable seat
     target.gx = 11.0
     target.gy = 6.1
 
+    const holding = snapshot(
+      [
+        ['a', 'idle'],
+        ['b', 'idle'],
+      ],
+      1,
+      { a: deskPlan.deskIndex, b: null },
+    )
     const idle = snapshot(
       [
         ['a', 'idle'],
@@ -695,7 +698,7 @@ test('planner holds a character in place instead of adopting an unreachable seat
       ],
       1,
     )
-    const graceStarted = step(working, idle, 1)
+    const graceStarted = step(working, holding, 1)
     const afterGrace = step(graceStarted, idle, DESK_GRACE_MS + 2)
     const held = afterGrace.plans.get('a')!
 
@@ -726,38 +729,23 @@ test('planner holds a character in place instead of adopting an unreachable seat
 })
 
 
-test('a blocked desk departure keeps the desk reserved instead of reassigning it', () => {
+
+test('a blocked desk departure holds the worker at its desk and never adopts the unreachable seat', () => {
   const target = LOUNGE_SEATS[0]
   const original = { gx: target.gx, gy: target.gy }
   try {
     let state = step(initialPlannerState(), snapshot([['a/tool', 'tool']], 0), 0)
-    const desk = state.desks.get('a/tool')!
-    assert.equal(desk, 0)
+    assert.equal(state.desks.get('a/tool'), 0)
 
     // Block the lounge departure: the destination seat sits inside the coffee table.
     target.gx = 11.0
     target.gy = 6.1
-    const idle = snapshot([['a/tool', 'idle']], 1000)
-    state = step(state, idle, 1000)
-    state = step(state, idle, 1000 + DESK_GRACE_MS)
+    state = step(state, snapshot([['a/tool', 'idle']], 1000, { 'a/tool': null }), 1000 + DESK_GRACE_MS)
 
-    assert.equal(state.desks.get('a/tool'), desk, 'the desk stays reserved on a failed departure')
     const held = state.plans.get('a/tool')!
-    assert.equal(held.seat.id, DESK_SEATS[desk].id)
-    assert.equal(held.deskIndex, desk)
-
-    // A new working worker must not be handed the still-occupied desk.
-    const withNewWorker = snapshot(
-      [
-        ['a/tool', 'idle'],
-        ['b/tool', 'tool'],
-      ],
-      1000 + DESK_GRACE_MS,
-    )
-    state = step(state, withNewWorker, 1000 + DESK_GRACE_MS)
-    assert.equal(state.desks.get('a/tool'), desk)
-    assert.notEqual(state.desks.get('b/tool'), desk)
-    assert.equal(state.plans.get('a/tool')!.deskIndex, desk)
+    assert.equal(held.seat.id, DESK_SEATS[0].id)
+    assert.equal(held.deskIndex, 0)
+    assert.equal(held.walkDuration, 0)
   } finally {
     target.gx = original.gx
     target.gy = original.gy

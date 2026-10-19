@@ -13,6 +13,7 @@ import { extname, join, resolve, sep } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { OfficeStore, sessionsDir } from './sessions.ts'
+import { DeskAllocator, deskStateFile } from './desks.ts'
 import { SSE_HEADERS, SseHub } from './sse.ts'
 
 const HOST = process.env.HOST || '127.0.0.1'
@@ -243,7 +244,8 @@ export async function handle(req: IncomingMessage, res: ServerResponse): Promise
 
 // ---------------------------------------------------------------- boot
 
-const store = new OfficeStore(sessionsDir())
+// Desk occupancy is app-owned state (never ~/.pi): it survives restarts and deploys.
+const store = new OfficeStore(sessionsDir(), undefined, new DeskAllocator({ file: deskStateFile() }))
 
 const server = createServer((req, res) => {
   void handle(req, res).catch(() => {

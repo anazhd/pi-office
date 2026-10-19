@@ -30,6 +30,7 @@ function character(displayName: string): Character {
     title: 'Intern',
     xp: 0,
     levelProgress: 0,
+    desk: null,
     status: 'idle',
     active: [],
   }

@@ -82,7 +82,7 @@ server/, scripts/           read-only data server and systemd installer
 - Working: walks the aisle route in ~1–3 s, sits facing the monitor, types, monitor glows with scrolling code,
   speech bubble shows `thinking` dots or the tool icon/name, plus the project basename and a `×N` badge.
 - New models walk in from the entrance mat with a little confetti burst.
-- Desks are assigned first-free while a model has active sessions and released when it goes idle. Lounge seats
+- Desks are server-owned (see **Hot desks** below): a working model gets a random free desk and keeps it. Lounge seats
   are stable by first-seen order.
 
 ## Activity inference
@@ -95,12 +95,27 @@ Logs do not prove process liveness. Unfinished work expires from the last releva
 mtime**: 10 minutes for thinking, 60 minutes for silent tool execution. Unrelated title/custom updates cannot
 renew historical work. T3's embedded Pi workers do not provide verified exact-session process liveness via argv;
 no lifecycle hooks are installed. A killed run can remain inferred active until expiry; a tool silent beyond an
-hour can be falsely idle. See `SPEC.md`. The scene keeps its normal 20-second desk grace before returning to coffee,
+hour can be falsely idle. See `SPEC.md`. The server keeps the desk for a 20-second grace after the last activity before the character returns to coffee,
 including on errors; working badges clear immediately.
+
+## Hot desks
+
+- The server is the only authority for desk occupancy (`shared/desk-allocation.ts`, applied in `server/sessions.ts`).
+  Each snapshot carries every character's `desk` (0–9 or `null`); clients place characters exactly there and never
+  choose a desk themselves.
+- A working model without a desk takes one of the free desks **at random**. It keeps that desk while it works and for
+  a 20-second grace after going idle. Released desks are free for the next assignment; departures never move anyone
+  else.
+- Capacity: with all 10 desks taken, extra working models wait on the standing spots until a desk is released.
+- Persisted in app-owned state, never under `~/.pi`: `$PI_OFFICE_STATE_FILE`, else `~/.local/state/pi-office/desks.json`.
+  The file is rewritten only when an assignment changes (temp file + rename). A browser refresh, a reconnect and a
+  server restart or deploy therefore leave everyone at their desk. A corrupt or unwritable file starts an empty office
+  (with one warning) instead of failing.
 
 ## Read-only guarantee
 
 - No inputs write anywhere. The only interaction is selecting a character/roster card (read-only stats).
+- The only file the server writes is its own desk-occupancy state (above). Nothing under `~/.pi` is ever written.
 - The client only consumes `OfficeSnapshot`; the server strips message text, session names, thinking, tool
   arguments and tool output before sending.
 - Card contents: display name, provider/model, level/title/XP, lifetime messages, tokens, tool calls, sessions,

@@ -19,6 +19,7 @@ import {
 } from './parse.ts'
 import { buildOfficeSnapshot, type SessionView } from './office.ts'
 import { createNameResolver, type NameResolver } from './names.ts'
+import { DeskAllocator } from './desks.ts'
 
 export const DEBOUNCE_MS = 300
 export const TICK_MS = 5_000
@@ -141,6 +142,8 @@ export class OfficeStore {
   private roster = new IncrementalRoster(startOfLocalDay(Date.now()))
   private nameFor: NameResolver = createNameResolver([])
   private readonly fsys: SessionFileSystem
+  /** Authoritative hot-desk occupancy; applied to every snapshot. */
+  private readonly desks: DeskAllocator
   private listeners = new Set<() => void>()
   private watcher: FSWatcher | null = null
   private debounce: ReturnType<typeof setTimeout> | null = null
@@ -150,9 +153,14 @@ export class OfficeStore {
   private again = false
   private ready: Promise<void> | null = null
 
-  constructor(dir: string, fsys: SessionFileSystem = nodeSessionFileSystem) {
+  constructor(
+    dir: string,
+    fsys: SessionFileSystem = nodeSessionFileSystem,
+    desks: DeskAllocator = new DeskAllocator(),
+  ) {
     this.dir = dir
     this.fsys = fsys
+    this.desks = desks
   }
 
   /** Start watching and resolve after the first full scan. */
@@ -402,14 +410,16 @@ export class OfficeStore {
     return this.roster.entries()
   }
 
-  /** Current office snapshot. */
+  /** Current office snapshot, with each character's desk reconciled against the persisted occupancy. */
   snapshot(now = Date.now()): OfficeSnapshot {
     const dayStart = startOfLocalDay(now)
-    return buildOfficeSnapshot({
-      now,
-      sessions: this.views(),
-      roster: this.rosterFor(dayStart),
-      nameFor: this.nameFor,
-    })
+    return this.desks.apply(
+      buildOfficeSnapshot({
+        now,
+        sessions: this.views(),
+        roster: this.rosterFor(dayStart),
+        nameFor: this.nameFor,
+      }),
+    )
   }
 }

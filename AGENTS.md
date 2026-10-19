@@ -31,6 +31,7 @@ Read-only isometric “window into Pi”. See `README.md` for the product and `S
 - Data hook: `src/hooks/use-office.ts` (SSE + reconnect backoff, polling fallback). Tick: `src/hooks/use-tick.ts`
   (≤20 fps, pauses when hidden). Default API is same-origin; `EXPO_PUBLIC_OFFICE_API` overrides.
 - Read-only: never add controls that write to Pi or `~/.pi`. The card is stats only.
+- Desk occupancy is server-owned (`shared/desk-allocation.ts`, persisted by `server/desks.ts`). The client only places characters at the snapshot's `desk`; never assign desks in the client.
 - Styling is NativeWind/Tailwind; the scene is `react-native-svg` only. Keep both web and native working.
 - Mock feed: `EXPO_PUBLIC_OFFICE_MOCK=1` (`src/api/mock.ts`), cycles states every ~4 s.
 - Shared API types: `shared/office-types.ts` (do not change without updating `server/`).

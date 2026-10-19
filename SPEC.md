@@ -8,7 +8,7 @@ Sibling of `/root/github/pi-stats` (read it for patterns: session tailing, syste
 
 ## Hard rules
 
-1. **Pure viewer.** Never write to `~/.pi`, never call Pi, no extension, no hooks. Only `fs.read*`/`fs.watch`/`stat`.
+1. **Pure viewer.** Never write to `~/.pi`, never call Pi, no extension, no hooks. Only `fs.read*`/`fs.watch`/`stat` on Pi's files. The one file the server writes is its own desk-occupancy state under `~/.local/state/pi-office/` (`PI_OFFICE_STATE_FILE` overrides).
 2. **No content leaks.** Never send message text, thinking, tool arguments or tool output to the client. Allowed:
    provider, model, display name, tool *name*, project basename (`path.basename(cwd)`), session id hash, token
    counts, timestamps, stop reasons.
@@ -50,6 +50,8 @@ src/
   components/                  HUD, character card, legend (NativeWind)
   hooks/                       useOffice(), useTick()
 scripts/install-local.sh       build web + write/enable/restart systemd user unit `pi-office`
+shared/desk-allocation.ts      hot-desk occupancy rules (pure; used by the server and the mock)
+server/desks.ts                persisted occupancy (app-owned state file, never ~/.pi)
 ```
 
 ## Data source & state detection (server)
@@ -100,8 +102,7 @@ hooks, extensions or historical-log edits. Runtime inspection found T3 uses embe
 without exact session IDs in argv; process presence cannot safely renew a session. Pi `agent_end`/`turn_end` are
 runtime events, not persisted lifecycle entries; arbitrary custom entries must not be interpreted as termination.
 The session's model = provider/model of last assistant message, overridden by any later `model_change`.
-The existing client 20-second desk grace applies to all idle transitions, including errors: badges stop immediately,
-then the character returns to coffee after the bounded grace (no extra terminal status is sent to the client).
+The 20-second desk grace applies to all idle transitions, including errors: badges stop immediately, then the server releases the desk after the bounded grace and the character returns to coffee (no extra terminal status is sent to the client).
 
 **Roster** (lifetime): every distinct `provider + "/" + model` seen in any assistant message (successful or not),
 plus models from model_change that have at least one assistant message. Aggregate per character: `messages`,
@@ -151,8 +152,9 @@ Characters (one per roster entry, deterministic look from hash of id):
 - **Idle (lounge):** seated, holding a mug, steam wisps rising, occasional sip (raise mug) at random offsets,
   slight breathing bob. Some read a magazine / look at phone for variety (deterministic by hash).
 - **Working:** walk (tween along grid path, simple L-shaped path, ~1.5s) from lounge seat to the nearest free
-  desk slot (hot desking: no fixed desk; stable assignment while working = first free slot by desk order,
-  keep it until idle). Seated typing animation (hands bob), monitor lit. Speech bubble above head:
+  desk slot (hot desking: no fixed desk; the server gives a working model a random free desk,
+  keeps it while the model works and for the 20 s grace after it goes idle, and persists occupancy so refreshes and
+  restarts never reshuffle anyone; rules in `shared/desk-allocation.ts`). Seated typing animation (hands bob), monitor lit. Speech bubble above head:
   `thinking` → animated "…" ; `tool` → icon + tool name (bash ▶, read 📖, edit ✏️, write 📝, web_search 🔎,
   fetch_content 🌐, mcp__* → 🧩 + short name after last `__`, other ⚙️). Show project basename small under bubble.
   If a model has >1 active sessions, badge "×N".

@@ -128,6 +128,8 @@ export function buildOfficeSnapshot(input: SnapshotInput): OfficeSnapshot {
       xp,
       levelProgress: levelProgress(xp),
       status,
+      // Filled in by the desk allocator (shared/desk-allocation.ts) when the snapshot is served.
+      desk: null,
       active,
     })
   }

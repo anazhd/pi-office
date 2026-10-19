@@ -32,12 +32,10 @@ export type Plan = {
 
 export type PlannerState = {
   plans: Map<string, Plan>
-  /** character id -> hot-desk index. */
+  /** character id -> hot-desk index, exactly as the server's snapshot assigned it (never chosen here). */
   desks: Map<string, number>
   /** character id -> sticky lounge-seat index, kept across desk trips. */
   lounges: Map<string, number>
-  /** character id -> local time at which its reserved desk may be released. */
-  graceUntil: Map<string, number>
   /** Every character ever seen, so a returning character is not a "new hire". */
   seen: Set<string>
   loaded: boolean
@@ -63,15 +61,12 @@ export const WALK_MS_PER_TILE = 600
 /** Short hops still read as walking, and long cross-office trips must not be rushed. */
 export const WALK_MIN_MS = 1500
 export const WALK_MAX_MS = 12_000
-/** Pi goes idle between turns; hold the desk this long before giving it up. */
-export const DESK_GRACE_MS = 20_000
 
 export function initialPlannerState(): PlannerState {
   return {
     plans: new Map(),
     desks: new Map(),
     lounges: new Map(),
-    graceUntil: new Map(),
     seen: new Set(),
     loaded: false,
     retryAt: null,
@@ -187,6 +182,24 @@ function desksEqual(a: Map<string, number>, b: Map<string, number>): boolean {
   return true
 }
 
+/**
+ * Desk index per character from the server's snapshot. The server is the only desk authority: a character
+ * without a valid, unclaimed `desk` has none here. A duplicate claim (never sent by the server) is ignored
+ * for the later character so one desk is never drawn with two occupants.
+ */
+export function desksFromSnapshot(snapshot: OfficeSnapshot): Map<string, number> {
+  const desks = new Map<string, number>()
+  const claimed = new Set<number>()
+  for (const char of snapshot.characters) {
+    const desk = char.desk
+    if (typeof desk !== 'number' || !Number.isInteger(desk) || desk < 0 || desk >= DESK_CAPACITY) continue
+    if (claimed.has(desk)) continue
+    claimed.add(desk)
+    desks.set(char.id, desk)
+  }
+  return desks
+}
+
 function mapsEqual(a: Map<string, number>, b: Map<string, number>): boolean {
   return desksEqual(a, b)
 }
@@ -214,71 +227,22 @@ export function step(
 ): PlannerState {
   if (!snapshot) return prev
 
-  // Fast path for ticks between snapshots: plans only change on a server push or when a
-  // desk grace window expires on the clock.
+  // Fast path for ticks between snapshots: plans only change on a server push (desk changes arrive
+  // with it) or when a bounded route retry falls due on the clock.
   if (prev.loaded && snapshot === prev.lastSnapshot) {
-    if (prev.retryAt != null && now < prev.retryAt) return prev
-    let expired = prev.retryAt != null && now >= prev.retryAt
-    for (const expiry of prev.graceUntil.values()) {
-      if (now >= expiry) {
-        expired = true
-        break
-      }
-    }
-    if (!expired) return prev
+    if (prev.retryAt == null || now < prev.retryAt) return prev
   }
 
   let retryAt: number | null = null
   const firstRender = !prev.loaded
-  const desks = new Map(prev.desks)
+  const desks = desksFromSnapshot(snapshot)
   const lounges = new Map(prev.lounges)
-  const grace = new Map(prev.graceUntil)
   const plans = new Map<string, Plan>()
   const seen = new Set(prev.seen)
-  /** Idle desks whose grace has expired. Released only after a departure route succeeds. */
-  const expiringDesks = new Set<string>()
 
   const present = new Set(snapshot.characters.map((c) => c.id))
-  const active = new Set(
-    snapshot.characters.filter((c) => c.status !== 'idle').map((c) => c.id),
-  )
-
   for (const id of [...lounges.keys()]) {
     if (!present.has(id)) lounges.delete(id)
-  }
-
-  for (const id of [...desks.keys()]) {
-    if (!present.has(id)) {
-      desks.delete(id)
-      grace.delete(id)
-      continue
-    }
-    if (active.has(id)) {
-      grace.delete(id)
-      continue
-    }
-    // Idle at a desk: keep the assignment reserved for a grace window so a short pause
-    // between Pi turns does not send the worker on a pointless walk to the lounge.
-    const expiry = grace.get(id)
-    if (expiry == null) {
-      grace.set(id, now + DESK_GRACE_MS)
-    } else if (now >= expiry) {
-      // Keep the reservation while the worker is still sitting there: if no departure
-      // route exists, the desk stays theirs instead of being handed to another worker.
-      expiringDesks.add(id)
-    }
-  }
-
-  const used = new Set(desks.values())
-  for (const char of snapshot.characters) {
-    if (char.status === 'idle' || desks.has(char.id)) continue
-    for (let i = 0; i < DESK_CAPACITY; i++) {
-      if (!used.has(i)) {
-        desks.set(char.id, i)
-        used.add(i)
-        break
-      }
-    }
   }
 
   // Sticky lounge seats: only characters without one take the first free index, in
@@ -295,9 +259,7 @@ export function step(
   let waitingCount = 0
   for (let index = 0; index < snapshot.characters.length; index++) {
     const char = snapshot.characters[index]
-    const reservedDeskIndex = desks.get(char.id) ?? null
-    const departing = reservedDeskIndex != null && expiringDesks.has(char.id)
-    const deskIndex = departing ? null : reservedDeskIndex
+    const deskIndex = desks.get(char.id) ?? null
     let seat: Seat
     if (deskIndex != null) seat = deskSeatFor(deskIndex)
     else if (char.status !== 'idle') seat = standingSeatFor(waitingCount++)
@@ -314,7 +276,8 @@ export function step(
     let plannedDeskIndex = deskIndex
 
     if (firstRender) {
-      // Nobody walks in on the first render: the office is already populated.
+      // Nobody walks in on the first render: the office is already populated, and each
+      // character sits exactly where the server's desk assignment puts it.
       path = []
     } else if (previous) {
       enteredAt = previous.enteredAt
@@ -361,11 +324,6 @@ export function step(
           walkDuration = 0
         } else {
           path = route
-          // The desk reservation is only freed once we have a verified way out.
-          if (departing) {
-            desks.delete(char.id)
-            grace.delete(char.id)
-          }
           walkStart = now
           walkDuration = clamp(
             pathLength(path) * WALK_MS_PER_TILE,
@@ -426,7 +384,6 @@ export function step(
     plansEqual(prev.plans, plans) &&
     desksEqual(prev.desks, desks) &&
     mapsEqual(prev.lounges, lounges) &&
-    mapsEqual(prev.graceUntil, grace) &&
     setsEqual(prev.seen, seen)
   ) {
     return prev
@@ -436,7 +393,6 @@ export function step(
     plans,
     desks,
     lounges,
-    graceUntil: grace,
     seen,
     loaded: true,
     retryAt,

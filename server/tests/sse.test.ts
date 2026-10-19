@@ -28,6 +28,7 @@ function snapshot(now: number, outputTokens = 0): OfficeSnapshot {
             title: 'Intern',
             xp: outputTokens,
             levelProgress: 0,
+            desk: null,
             status: 'idle',
             active: [],
           },

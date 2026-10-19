@@ -1,4 +1,11 @@
 import type { ActiveSession, ActivityStatus, Character, OfficeSnapshot } from './types'
+import {
+  candidatesFor,
+  emptyDeskPlan,
+  reconcileDesks,
+  withDesks,
+  type DeskPlan,
+} from '../../shared/desk-allocation'
 
 const MIN = 60_000
 const DAY = 86_400_000
@@ -241,6 +248,8 @@ const PHASES: Array<Record<string, ActiveSession[]>> = [
 
 let phase = 1
 let phaseTicks = 0
+/** Same occupancy rules as the server's allocator, so the fixture shows real desk behaviour. */
+let desks: DeskPlan = emptyDeskPlan()
 
 /**
  * The app polls the fixture every ~4.2 s. Hold each phase for a few polls so the long walks
@@ -289,11 +298,12 @@ export function nextMockSnapshot(): OfficeSnapshot {
       xp: meta.outputTokens,
       levelProgress: progressFor(meta.outputTokens, level),
       status,
+      desk: null,
       active: sessions.map((s) => ({ ...s, since: now - 90_000 - (index + 1) * 5_000 })),
     }
   })
 
-  return {
+  const snapshot: OfficeSnapshot = {
     now,
     characters,
     totals: {
@@ -303,4 +313,6 @@ export function nextMockSnapshot(): OfficeSnapshot {
       lifetimeOutputTokens: characters.reduce((n, c) => n + c.stats.outputTokens, 0),
     },
   }
+  desks = reconcileDesks(desks, candidatesFor(snapshot), now)
+  return withDesks(snapshot, desks.assignments)
 }

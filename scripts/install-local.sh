@@ -4,7 +4,8 @@
 #   sh scripts/install-local.sh            # build, write unit, enable, restart
 #   PORT=6702 sh scripts/install-local.sh
 # Code change later: sh scripts/install-local.sh (or npm run build && systemctl --user restart pi-office)
-# Data: none. Everything is read from Pi's session files (~/.pi/agent/sessions) — never written.
+# Data: read from Pi's session files (~/.pi/agent/sessions), never written. The only state the server writes is its
+# desk occupancy (~/.local/state/pi-office/desks.json, or PI_OFFICE_STATE_FILE); it survives restarts and deploys.
 set -eu
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
