@@ -134,7 +134,7 @@ test('repeated retargets inside a seat leg retain its verified front-side exit',
 
 test('sofa and all four pots: desk trips never intersect their padded bounds; arbitrary embedded connectors are rejected', () => {
   const items = ROUTING_ITEMS.filter((i) => i.key.startsWith('plant-') || i.key.startsWith('sofa-'))
-  assert.equal(items.filter((i) => i.key.startsWith('plant-')).length, 4)
+  assert.equal(items.filter((i) => i.key.startsWith('plant-')).length, 2)
   for (const item of items) {
     const b = item.box
     const embedded = { gx: b.gx + b.w / 2, gy: b.gy + b.d / 2 }

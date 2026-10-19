@@ -89,23 +89,17 @@ function plantBox(cx: number, cy: number, scale: number): Box {
 }
 
 const PLANT_LOUNGE_CENTRE = { gx: 13.35, gy: 3.05 }
-const PLANT_DOOR_CENTRE = { gx: 7.78, gy: 9.22 }
 const PLANT_SHELF_CENTRE = { gx: 0.62, gy: 9.28 }
-const PLANT_DESK_CENTRE = { gx: 0.55, gy: 6.35 }
 
 export type PlantSpec = { box: Box; seed: number; scale: number }
 
 export const PLANT_SPECS: PlantSpec[] = [
   { box: plantBox(PLANT_LOUNGE_CENTRE.gx, PLANT_LOUNGE_CENTRE.gy, 1.1), seed: 1, scale: 1.1 },
-  { box: plantBox(PLANT_DOOR_CENTRE.gx, PLANT_DOOR_CENTRE.gy, 0.9), seed: 2, scale: 0.9 },
   { box: plantBox(PLANT_SHELF_CENTRE.gx, PLANT_SHELF_CENTRE.gy, 0.8), seed: 3, scale: 0.8 },
-  { box: plantBox(PLANT_DESK_CENTRE.gx, PLANT_DESK_CENTRE.gy, 0.75), seed: 4, scale: 0.75 },
 ]
 
 export const PLANT_LOUNGE = PLANT_SPECS[0].box
-export const PLANT_DOOR = PLANT_SPECS[1].box
-export const PLANT_SHELF = PLANT_SPECS[2].box
-export const PLANT_DESK = PLANT_SPECS[3].box
+export const PLANT_SHELF = PLANT_SPECS[1].box
 
 export const PLANTS: Box[] = PLANT_SPECS.map((spec) => spec.box)
 
