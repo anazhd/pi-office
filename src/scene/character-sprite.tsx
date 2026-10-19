@@ -144,7 +144,7 @@ function NameTag({
   selected: boolean
   name: string
 }) {
-  const width = Math.max(30, name.length * 3.7 + 11)
+  const width = Math.max(22, name.length * 3.2 + 8)
   return (
     <G>
       <Rect
@@ -160,7 +160,7 @@ function NameTag({
         strokeWidth={0.8}
       />
       <SvgText
-        x={-3.5}
+        x={0}
         y={7.2}
         textAnchor="middle"
         fontSize={6.2}
