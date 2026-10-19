@@ -30,9 +30,15 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
   const bob = walking || waiting ? 0 : Math.sin(phase * 1.5 + offset) * 1
   // Step cadence follows the distance actually covered along the path, so the feet
   // plant at walking speed instead of skating under a fixed clock.
-  const stridePhase = scene.strideTiles * 4.4
-  const stride = walking ? Math.sin(stridePhase) : 0
-  const bounce = walking ? Math.abs(Math.sin(stridePhase)) * 1.8 : 0
+  const cycle = scene.strideTiles / 0.75
+  // Progress has no duration attached: infer it from distance after the first few
+  // samples, falling back to a typical trip. Clamp to keep short hops gentle.
+  const duration = scene.walkProgress > 0.01
+    ? Math.max(1500, Math.min(12000, scene.strideTiles / scene.walkProgress * 600))
+    : 3000
+  const edge = Math.min(scene.walkProgress, 1 - scene.walkProgress) * duration / 200
+  const blend = walking ? Math.max(0, Math.min(1, edge)) : 0
+  const settle = 1 - blend
   const typeBeat = Math.sin(phase * 7.5 + offset) * 1.2
   const chair = chairFabric(scene.deskIndex ?? 0)
 
@@ -70,8 +76,9 @@ export function CharacterSprite({ scene, now, selected, dense, onSelect }: Props
         {walking || waiting ? (
           <WalkingBody
             look={look}
-            stride={stride}
-            bounce={bounce}
+            cycle={cycle}
+            blend={blend}
+            settle={walking ? settle : 0}
             heading={scene.heading}
             phase={phase}
             still={waiting}
@@ -210,73 +217,85 @@ function NameTag({
   )
 }
 
+// All limb silhouettes are static. Only their short translations change per tick.
+const WALK_TORSO = 'M -10 -33 Q -11 -41 -3 -41 L 4 -40 Q 10 -39 10 -33 L 9 -17 Q 0 -14 -9 -17 Z'
+const WALK_ARM = 'M 0 0 Q -1 5 1 10 L 2 13'
+
+/** Stance is linear backwards (a planted shoe); swing returns smoothly with toe clearance. */
+function footfall(cycle: number) {
+  const t = ((cycle % 1) + 1) % 1
+  if (t < 0.5) return { travel: 6 - 24 * t, lift: 0 }
+  const u = (t - 0.5) * 2
+  return { travel: -6 + 12 * u * u * (3 - 2 * u), lift: 2.6 * Math.sin(u * Math.PI) }
+}
+
 function WalkingBody({
-  look,
-  stride,
-  bounce,
-  heading,
-  phase,
-  still = false,
+  look, cycle, blend, settle, heading, phase, still = false,
 }: {
   look: Look
-  stride: number
-  bounce: number
+  cycle: number
+  blend: number
+  settle: number
   heading: Heading
   phase: number
   still?: boolean
 }) {
   const back = heading === 'back-left' || heading === 'back-right'
   const mirror = heading === 'front-left' || heading === 'back-left'
-  const legA = stride * 20
-  const legB = -stride * 20
-  return (
-    <G transform={`translate(0 ${-bounce})${mirror ? ' scale(-1 1)' : ''}`}>
-      <G transform={`rotate(${legA} -6 -16)`}>
-        <Rect x={-9} y={-18} width={6} height={18} rx={3} fill={look.pants} />
-        <Rect x={-10.5} y={-3} width={9} height={4} rx={2} fill="#2E2924" />
-      </G>
-      <G transform={`rotate(${legB} 6 -16)`}>
-        <Rect x={3} y={-18} width={6} height={18} rx={3} fill={look.pants} />
-        <Rect x={2.5} y={-3} width={9} height={4} rx={2} fill="#2E2924" />
-      </G>
-
-      <Arm look={look} x={-11} y={-37} swing={stride * 16} />
-      <Arm look={look} x={11} y={-37} swing={-stride * 16} />
-
-      {back ? (
-        <G>
-          <Rect x={-11} y={-41} width={22} height={25} rx={8} fill={look.shirtBack} />
-          <Path
-            d="M -7 -37 Q 0 -32 7 -37"
-            stroke={look.shirtDark}
-            strokeWidth={1.4}
-            fill="none"
-            opacity={0.7}
-          />
-          <Rect x={-2} y={-41} width={4} height={7} rx={1.4} fill={look.shirtDark} opacity={0.5} />
-          <BackHead look={look} cy={-48} phase={phase} />
-        </G>
-      ) : (
-        <G>
-          <Rect x={-11} y={-41} width={22} height={25} rx={8} fill={look.shirt} />
-          <Path d="M -10 -39 L 0 -33 L 10 -39" stroke={look.shirtDark} strokeWidth={2} fill="none" />
-          <Rect x={-5.5} y={-37.5} width={11} height={8} rx={2} fill="#F4EDE0" opacity={0.9} />
-          <Rect x={-3.5} y={-35.4} width={7} height={1.4} rx={0.7} fill={look.shirtDark} opacity={0.6} />
-          {/* head leads the walk: mirrored variants make the left/right headings read differently */}
-          <G transform="translate(1.6 0)">
-            <Head look={look} typing={false} sip={0} phase={phase} />
-          </G>
-        </G>
-      )}
+  const amount = still ? 0 : blend
+  const far = footfall(cycle)
+  const near = footfall(cycle + 0.5)
+  const directionY = back ? -0.5 : 0.5
+  const nearX = back ? 5 : -5
+  const angle = cycle * Math.PI * 2
+  const bob = (1 - Math.cos(angle * 2)) * 0.6 * amount
+  const sway = Math.sin(angle) * 0.35 * amount
+  const drop = settle * 3
+  const arm = (foot: ReturnType<typeof footfall>, x: number, isNear: boolean) => (
+    <G transform={`translate(${x} ${isNear ? -36 : -38}) rotate(${foot.travel * amount * 1.4} 0 0)`}>
+      <Path d={WALK_ARM} stroke={back ? look.shirtBack : look.shirtDark} strokeWidth={5} strokeLinecap="round" fill="none" />
+      <Circle cx={2} cy={13} r={2.7} fill={look.skin} />
     </G>
   )
-}
-
-function Arm({ look, x, y, swing }: { look: Look; x: number; y: number; swing: number }) {
+  const leg = (foot: ReturnType<typeof footfall>, x: number, isNear: boolean) => {
+    const dx = foot.travel * amount
+    // Two narrow tracks, not a single tightrope: shoes never scissor through
+    // one another at contact, even when projected onto the screen's x axis.
+    const footX = x * 1.4 + dx
+    const dy = dx * directionY - foot.lift * amount
+    const ground = isNear ? 0 : -3
+    return (
+      <G>
+        <Line x1={x} y1={-18 + drop} x2={footX} y2={ground - 2 + dy} stroke={look.pants} strokeWidth={6} strokeLinecap="round" />
+        <G transform={`translate(${footX} ${ground + dy})`}>
+          <Path d="M -4 -3 Q -4 -5 0 -5 L 5 -3 Q 7 -1 5 1 L -3 1 Q -5 0 -4 -3 Z" fill="#2E2924" />
+          <Path d="M -3 0 L 5 0" stroke="#928778" strokeWidth={0.8} strokeLinecap="round" />
+        </G>
+      </G>
+    )
+  }
   return (
-    <G transform={`rotate(${swing} ${x} ${y})`}>
-      <Rect x={x - 2.6} y={y} width={5.2} height={16} rx={2.6} fill={look.shirtDark} />
-      <Circle cx={x} cy={y + 17} r={3.1} fill={look.skin} />
+    <G transform={mirror ? 'scale(-1 1)' : undefined}>
+      {leg(far, -nearX, false)}
+      {leg(near, nearX, true)}
+      <G transform={`translate(${sway + amount * 0.8} ${drop - bob}) rotate(${amount * 1.4} 0 -17)`}>
+        {arm(far, -nearX * 2, false)}
+        <Path d={WALK_TORSO} fill={back ? look.shirtBack : look.shirt} />
+        {back ? (
+          <Path d="M -6 -36 Q 0 -33 6 -36" stroke={look.shirtDark} strokeWidth={1} opacity={0.4} fill="none" />
+        ) : (
+          <G transform="translate(2 0)">
+            <Path d="M -8 -39 L 0 -34 L 7 -38" stroke={look.shirtDark} strokeWidth={1.5} fill="none" />
+            <Rect x={-4} y={-35} width={8} height={6} rx={1.5} fill="#F4EDE0" />
+            <Line x1={-2} y1={-32} x2={2} y2={-32} stroke={look.shirtDark} strokeWidth={1} />
+          </G>
+        )}
+        {arm(near, nearX * 2, true)}
+        {/* Head trails the shoulder bob slightly; the entire hairstyle mirrors with facing. */}
+        <G transform={`translate(${back ? 0.4 : 2} ${(Math.cos(angle * 2 - 0.45) - Math.cos(angle * 2)) * 0.3 * amount})`}>
+          {back ? <BackHead look={look} cy={-48} phase={phase} /> : <Head look={look} typing={false} sip={0} phase={phase} faceTurn={2} />}
+        </G>
+      </G>
     </G>
   )
 }
@@ -734,6 +753,7 @@ function Head({
   phase,
   headY,
   offset = 0,
+  faceTurn = 0,
 }: {
   look: Look
   typing: boolean
@@ -741,6 +761,7 @@ function Head({
   phase: number
   headY?: number
   offset?: number
+  faceTurn?: number
 }) {
   const cy = headY ?? -48
   const blink = Math.sin(phase * 1.9 + offset) > 0.985
@@ -762,7 +783,7 @@ function Head({
           <Rect x={-5} y={cy + 5} width={10} height={2.2} rx={1.1} fill={look.skin} opacity={0.5} />
         </G>
       ) : (
-        <G transform={`rotate(${-sip * 5} 0 ${cy + 4})`}>
+        <G transform={`translate(${faceTurn} 0) rotate(${-sip * 5} 0 ${cy + 4})`}>
           <Circle cx={-4.2} cy={cy + 0.4} r={1.15} fill="#2A201A" opacity={blink ? 0.15 : 0.9} />
           <Circle cx={4.2} cy={cy + 0.4} r={1.15} fill="#2A201A" opacity={blink ? 0.15 : 0.9} />
           <Ellipse cx={-7} cy={cy + 4} rx={2.2} ry={1.2} fill="#D97757" opacity={0.28} />
