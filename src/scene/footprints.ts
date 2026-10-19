@@ -59,10 +59,10 @@ export const DESK_CHAIR_BOXES: Box[] = DESK_SEAT_SPECS.map((seat) => deskChairBo
 export const SOFA: Box = { gx: 8.94, gy: 4.62, w: 1.0, d: 3.05 }
 export const ARMCHAIR_NORTH: Box = { gx: 12.12, gy: 5.0, w: 1.0, d: 0.86 }
 export const ARMCHAIR_SOUTH: Box = { gx: 12.12, gy: 6.74, w: 1.0, d: 0.86 }
-export const COFFEE_TABLE: Box = { gx: 10.28, gy: 5.58, w: 1.58, d: 1.05 }
+export const COFFEE_TABLE: Box = { gx: 10.55, gy: 5.58, w: 1.1, d: 1.05 }
 export const SIDE_TABLE: Box = { gx: 8.34, gy: 6.55, w: 0.62, d: 0.62 }
 export const OTTOMAN_NORTH: Box = { gx: 10.62, gy: 4.44, w: 0.84, d: 0.58 }
-export const OTTOMAN_SOUTH: Box = { gx: 10.62, gy: 7.2, w: 0.84, d: 0.58 }
+export const OTTOMAN_SOUTH: Box = { gx: 10.62, gy: 6.85, w: 0.84, d: 0.58 }
 export const WINDOW_BENCH: Box = { gx: 7.72, gy: 0.72, w: 1.92, d: 0.56 }
 export const COFFEE_COUNTER: Box = { gx: 10.3, gy: 0.42, w: 3.1, d: 0.9 }
 export const BOOKSHELF: Box = { gx: 0.26, gy: 7.88, w: 0.62, d: 1.55 }
@@ -76,8 +76,8 @@ export const BEANBAGS: Box[] = [
 
 export const CUSHIONS: Box[] = [
   { gx: 8.11, gy: 6.57, w: 0.68, d: 0.56 }, // on the side table
-  { gx: 9.64, gy: 7.44, w: 0.68, d: 0.56 },
-  { gx: 12.84, gy: 7.62, w: 0.68, d: 0.56 },
+  { gx: 8.11, gy: 7.5, w: 0.68, d: 0.56 },
+  { gx: 8.11, gy: 8.35, w: 0.68, d: 0.56 },
 ]
 
 export const FLOOR_LAMP: Box = { gx: 8.28, gy: 4.04, w: 0.28, d: 0.28 }
@@ -150,8 +150,5 @@ export const FURNITURE_FOOTPRINTS = {
   chairs: DESK_CHAIR_BOXES,
 } as const
 
-/**
- * Routing obstacles: the shared static boxes plus the per-seat monitors and chairs.
- * The array is built from the exact same Box objects furniture.tsx renders.
- */
-export const OBSTACLES: Box[] = [...STATIC_FURNITURE, ...DESK_MONITOR_BOXES, ...DESK_CHAIR_BOXES]
+/** Render spec boxes; routing is derived from the renderer's bounds in routing-obstacles.ts. */
+export const FURNITURE_BOXES: Box[] = [...STATIC_FURNITURE, ...DESK_MONITOR_BOXES, ...DESK_CHAIR_BOXES]

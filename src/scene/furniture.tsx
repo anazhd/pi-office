@@ -156,7 +156,7 @@ export function buildFurniture(
     add(
       `cushion-${i + 1}`,
       <G transform={i === 0 ? 'translate(0 -20.5)' : undefined}>
-        <Cushion gx={cushion.gx + cushion.w / 2} gy={cushion.gy + cushion.d / 2} />
+        <Cushion box={cushion} />
       </G>,
     )
   })
@@ -733,8 +733,8 @@ function CoffeeTable({ now }: { now: number }) {
         <Rect x={x.x - 4.5} y={x.y} width={9} height={4} rx={2} fill="#D9C9AF" />
       </G>
       {/* small terracotta planter stands on the tabletop */}
-      <Box gx={gx + 1.12} gy={gy + 0.62} w={0.16} d={0.16} z0={22.5} h={5} colors={RUST} />
-      <Circle cx={iso(gx + 1.2, gy + 0.7, 30).x} cy={iso(gx + 1.2, gy + 0.7, 30).y} r={4} fill="#5F8A55" />
+      <Box gx={gx + w - 0.3} gy={gy + 0.62} w={0.16} d={0.16} z0={22.5} h={5} colors={RUST} />
+      <Circle cx={iso(gx + w - 0.22, gy + 0.7, 30).x} cy={iso(gx + w - 0.22, gy + 0.7, 30).y} r={4} fill="#5F8A55" />
       {/* steam from mug */}
       <Path
         d={`M ${x.x} ${x.y - 5} q 2 -3 0 -5 q -2 -2 0 -4`}
@@ -797,11 +797,13 @@ function Beanbag({ gx, gy, color }: { gx: number; gy: number; color: string }) {
   </G>
 }
 
-function Cushion({ gx, gy }: { gx: number; gy: number }) {
+function Cushion({ box }: { box: Box }) {
+  const gx = box.gx + box.w / 2
+  const gy = box.gy + box.d / 2
   const p = iso(gx, gy, 6)
   return <G>
     <Shadow gx={gx} gy={gy} rx={17} ry={7} />
-    <SoftSeat box={{ gx: gx - 0.34, gy: gy - 0.28, w: 0.68, d: 0.56 }} h={6} color="#C9B08B" />
+    <SoftSeat box={box} h={6} color="#C9B08B" />
     <Ellipse cx={p.x} cy={p.y + 4} rx={1.2} ry={0.6} fill="#8C7658" />
   </G>
 }

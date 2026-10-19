@@ -1,25 +1,15 @@
 import type { Point } from './iso.ts'
 import {
   DESK_BENCHES,
-  DESK_CHAIR_BOXES,
   DESK_SEAT_SPECS,
-  OBSTACLES,
   STATIC_FURNITURE,
-  SIDE_TABLE,
-  SOFA,
-  ARMCHAIR_NORTH,
-  ARMCHAIR_SOUTH,
-  OTTOMAN_NORTH,
-  OTTOMAN_SOUTH,
-  WINDOW_BENCH,
-  BEANBAGS,
-  CUSHIONS,
-  deskChairBox,
   type Box,
 } from './footprints.ts'
 
 export type { Box } from './footprints.ts'
-export { DESK_BENCHES, OBSTACLES } from './footprints.ts'
+export { DESK_BENCHES } from './footprints.ts'
+import { OBSTACLES, ownObstacles } from './routing-obstacles.ts'
+export { OBSTACLES } from './routing-obstacles.ts'
 
 export type SeatKind =
   | 'desk'
@@ -75,10 +65,10 @@ export const LOUNGE_SEATS: Seat[] = [
   { id: 'l10', gx: 8.12, gy: 0.98, kind: 'window', facing: 'right' },
   { id: 'l11', gx: 9.12, gy: 0.98, kind: 'window', facing: 'right' },
   { id: 'l12', gx: 11.02, gy: 4.72, kind: 'ottoman', facing: 'right' },
-  { id: 'l13', gx: 11.02, gy: 7.48, kind: 'ottoman', facing: 'left' },
+  { id: 'l13', gx: 11.02, gy: 7.13, kind: 'ottoman', facing: 'left' },
   { id: 'l14', gx: 8.45, gy: 6.85, kind: 'cushion', facing: 'right' },
-  { id: 'l15', gx: 9.98, gy: 7.72, kind: 'cushion', facing: 'left' },
-  { id: 'l16', gx: 13.18, gy: 7.9, kind: 'cushion', facing: 'left' },
+  { id: 'l15', gx: 8.45, gy: 7.78, kind: 'cushion', facing: 'left' },
+  { id: 'l16', gx: 8.45, gy: 8.63, kind: 'cushion', facing: 'left' },
 ]
 
 export const DOOR: Point = { gx: 6.9, gy: 9.72 }
@@ -128,22 +118,22 @@ const SEAT_PORTALS: Record<string, Point> = {
       },
     ]),
   ),
-  l1: { gx: 8.65, gy: 5.12 },
-  l2: { gx: 8.65, gy: 6.18 },
-  l3: { gx: 8.65, gy: 7.24 },
-  l4: { gx: 12.0, gy: 5.38 },
-  l5: { gx: 12.0, gy: 6.0 },
-  l6: { gx: 9.38, gy: 8.95 },
-  l7: { gx: 10.45, gy: 8.95 },
-  l8: { gx: 11.52, gy: 8.95 },
-  l9: { gx: 12.58, gy: 8.95 },
+  l1: { gx: 10.23, gy: 5.12 },
+  l2: { gx: 10.23, gy: 6.18 },
+  l3: { gx: 10.23, gy: 7.24 },
+  l4: { gx: 11.9, gy: 5.25 },
+  l5: { gx: 11.9, gy: 7.0 },
+  l6: { gx: 9.38, gy: 9.04 },
+  l7: { gx: 10.45, gy: 9.04 },
+  l8: { gx: 11.52, gy: 9.04 },
+  l9: { gx: 12.58, gy: 9.04 },
   l10: { gx: 8.12, gy: 1.55 },
   l11: { gx: 9.12, gy: 1.55 },
   l12: { gx: 11.02, gy: 4.1 },
-  l13: { gx: 11.02, gy: 8.0 },
-  l14: { gx: 8.0, gy: 6.5 },
-  l15: { gx: 9.98, gy: 8.25 },
-  l16: { gx: 13.18, gy: 8.42 },
+  l13: { gx: 11.02, gy: 7.75 },
+  l14: { gx: 7.85, gy: 6.85 },
+  l15: { gx: 7.85, gy: 7.78 },
+  l16: { gx: 7.85, gy: 8.63 },
 }
 
 export function portalForSeat(seat: Seat): Point {
@@ -168,41 +158,10 @@ export function portalForSeat(seat: Seat): Point {
 
 /** Furniture a seat belongs to; only its own sit-down/stand-up leg may cross these. */
 export function seatOwnFootprints(seat: Seat): Box[] {
-  if (seat.kind === 'desk') {
-    const index = DESK_SEATS.findIndex((candidate) => candidate.id === seat.id)
-    return [index >= 0 ? DESK_CHAIR_BOXES[index] : deskChairBox(seat)]
-  }
-  if (seat.kind === 'standing') return []
-  switch (seat.id) {
-    case 'l1':
-    case 'l2':
-    case 'l3':
-      return [SOFA]
-    case 'l4':
-      return [ARMCHAIR_NORTH]
-    case 'l5':
-      return [ARMCHAIR_SOUTH]
-    case 'l6':
-    case 'l7':
-    case 'l8':
-    case 'l9':
-      return BEANBAGS[Number(seat.id.slice(1)) - 6] ? [BEANBAGS[Number(seat.id.slice(1)) - 6]] : []
-    case 'l10':
-    case 'l11':
-      return [WINDOW_BENCH]
-    case 'l12':
-      return [OTTOMAN_NORTH]
-    case 'l13':
-      return [OTTOMAN_SOUTH]
-    case 'l14':
-      return [SIDE_TABLE, CUSHIONS[0]]
-    case 'l15':
-      return [CUSHIONS[1]]
-    case 'l16':
-      return [CUSHIONS[2]]
-    default:
-      return []
-  }
+  const deskIndex = seat.kind === 'desk'
+    ? DESK_SEATS.findIndex((candidate) => candidate.id === seat.id)
+    : null
+  return ownObstacles(seat, deskIndex)
 }
 
 function pointInBox(p: Point, box: Box, pad = 0): boolean {
@@ -266,14 +225,14 @@ function segmentCrossesAny(a: Point, b: Point, obstacles: Box[], pad = 0): boole
 // ---------------------------------------------------------------------------
 // Lane graph
 //
-// A fixed grid of clear floor points (0.5 tile apart) covers the office. Every
+// A fixed grid of clear floor points (0.25 tile apart) covers the office. Every
 // grid edge is validated against the shared furniture footprints, and each seat
 // portal is connected to nearby clear grid points. The room is tiny, so this is
 // built once at module load and Dijkstra runs over it for every route.
 // ---------------------------------------------------------------------------
 
-const GRID_STEP = 0.5
-const ROUTE_PAD = 0.06
+const GRID_STEP = 0.25
+const ROUTE_PAD = 0.2
 
 type Edge = { to: number; cost: number }
 type GraphNode = { gx: number; gy: number; edges: Edge[] }
@@ -902,7 +861,7 @@ function resolveSeat(point: Point, kind: SeatKind | 'door', row?: 1 | 2 | 3): Se
  * `fromSeat` is set when the character is standing at (or in) its previous seat: the
  * first leg is then the stand-up leg through that seat's own furniture to its portal.
  * For a mid-walk retarget pass null; the first leg goes to the nearest reachable graph
- * node, ignoring only furniture the current point is already inside.
+ * node without obstacle exemptions. Retargets still inside a seat use buildRetargetPath.
  */
 export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point[] | null {
   if (!insideRoom(from) || !insideRoom({ gx: to.gx, gy: to.gy })) return null
@@ -910,17 +869,14 @@ export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point
   const ownFrom = fromSeat ? seatOwnFootprints(fromSeat) : []
   const ownTo = seatOwnFootprints(to)
   const destPortal = portalForSeat(to)
-  const startIgnored = fromSeat
-    ? ownFrom
-    : // A mid-walk point may still be inside the padded margin of furniture it is
-      // standing up from or sitting down into; allow the connector to leave it.
-      OBSTACLES.filter((box) => pointInBox(from, box, LANE_ROUTE_PAD))
+  const startIgnored = fromSeat ? ownFrom : []
 
   const raw: Point[] = [{ gx: from.gx, gy: from.gy }]
   let anchor = 0
   let startNode: number | null = null
 
   if (fromSeat) {
+    if (!routeSegmentClear(from, portalForSeat(fromSeat), ownFrom)) return null
     pushPoint(raw, portalForSeat(fromSeat))
     anchor = raw.length - 1
     startNode =
@@ -961,7 +917,7 @@ export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point
 
   // The sit-down/stand-up leg may enter the destination's own furniture, but never
   // anything else.
-  if (segmentCrossesAny(destPortal, to, OBSTACLES.filter((box) => !ownTo.includes(box)), 0)) {
+  if (segmentCrossesAny(destPortal, to, OBSTACLES.filter((box) => !ownTo.includes(box)), ROUTE_PAD)) {
     return null
   }
 
@@ -985,7 +941,7 @@ export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point
   if (destPortalIndex < raw.length - 1) pushPoint(smoothed, raw[raw.length - 1])
 
   const destinationPortal = destPortalIndex < raw.length - 1 ? smoothed.length - 2 : smoothed.length - 1
-  let result = simplify(pruneShortLegs(smoothed, destinationPortal, anchor))
+  let result = pruneShortLegs(smoothed, destinationPortal, anchor)
 
   // If the route is still visually choppy, re-route greedily through any visible node.
   const portalInResult = result.findIndex(
@@ -1003,6 +959,14 @@ export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point
       }
     }
   }
+  const stableTurns = (points: Point[]) => {
+    const directions = points.slice(1).flatMap((point, i) => {
+      const dx = point.gx - points[i].gx
+      const dy = point.gy - points[i].gy
+      return Math.hypot(dx, dy) >= MIN_ROUTE_LEG ? [directionBucket(dx, dy)] : []
+    })
+    return directions.slice(1).filter((direction, i) => direction !== directions[i]).length
+  }
   if (result.length > 8 || hasShortLeg) {
     const shortcut = visibilityShortcut(
       raw[anchor],
@@ -1014,10 +978,18 @@ export function buildRoute(from: Point, to: Seat, fromSeat?: Seat | null): Point
       const combined = raw.slice(0, anchor)
       for (const point of shortcut) pushPoint(combined, point)
       if (destPortalIndex < raw.length - 1) pushPoint(combined, raw[raw.length - 1])
-      result = simplify(combined)
+      if (stableTurns(combined) < stableTurns(result) ||
+          (stableTurns(combined) === stableTurns(result) && combined.length < result.length)) {
+        result = combined
+      }
     }
   }
 
+  // Keep protected seat legs, but also consider the turn-aware graph geometry.
+  const graphRoute = raw.slice(0, anchor)
+  for (const point of simplify(raw.slice(anchor, destPortalIndex + 1))) pushPoint(graphRoute, point)
+  if (destPortalIndex < raw.length - 1) pushPoint(graphRoute, raw[raw.length - 1])
+  if (graphRoute.length <= 8 && stableTurns(graphRoute) < stableTurns(result)) result = graphRoute
   return result
 }
 
@@ -1051,10 +1023,28 @@ export function buildRetargetPath(
   to: Point,
   opts: { toKind: SeatKind; toRow?: 1 | 2 | 3 },
 ): Point[] | null {
-  void path
-  void walkedTiles
   const toSeat = resolveSeat(to, opts.toKind, opts.toRow)
   if (!toSeat) return null
+  // Preserve the verified open-side leg while still inside a seat's padded envelope.
+  // Never grant a blanket exemption to whatever furniture happens to contain a point.
+  if (OBSTACLES.some((box) => pointInBox(current, box, ROUTE_PAD))) {
+    for (const seat of [...DESK_SEATS, ...LOUNGE_SEATS]) {
+      const portal = portalForSeat(seat)
+      const distance = (a: Point, b: Point) => Math.hypot(a.gx - b.gx, a.gy - b.gy)
+      const at = (p: Point | undefined, q: Point) => p != null && distance(p, q) < 1e-6
+      const onSeatLeg = (p: Point) =>
+        Math.abs(distance(p, seat) + distance(p, portal) - distance(seat, portal)) < 1e-6
+      const first = path[0] && onSeatLeg(path[0]) && onSeatLeg(current) && at(path[1], portal) &&
+        walkedTiles <= distance(path[0], portal) + 1e-6
+      const last = at(path.at(-1), seat) && at(path.at(-2), portal) && onSeatLeg(current) &&
+        walkedTiles >= pathLength(path) - distance(seat, portal) - 1e-6
+      if (!first && !last) continue
+      if (!routeSegmentClear(current, portal, seatOwnFootprints(seat))) return null
+      const rest = buildRoute(portal, toSeat, null)
+      return rest ? [current, ...rest] : null
+    }
+    return null
+  }
   return buildRoute(current, toSeat, null)
 }
 
