@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo } from 'react'
 import { G, Svg } from 'react-native-svg'
 import type { OfficeSnapshot } from '@/api/types'
 import { Backdrop } from './backdrop'
@@ -7,7 +7,6 @@ import { sortBackToFront } from './depth'
 import { buildFurniture } from './furniture'
 import { armchairForegroundKeys, characterBounds, furnitureContaining, seatFurnitureKeys } from './furniture-bounds'
 import { VIEWBOX } from './iso'
-import { SpeechBubble } from './speech-bubble'
 import type { SceneItem } from './types'
 import { useSceneModel } from './use-scene-model'
 
@@ -70,11 +69,6 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
 
   const ordered = sortBackToFront(items)
 
-  const talking = useMemo(
-    () => characters.filter((scene) => scene.pose === 'typing' || scene.pose === 'waiting'),
-    [characters],
-  )
-
   return (
     <Svg viewBox={VIEWBOX} width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
       <StaticBackdrop
@@ -84,7 +78,7 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
       {ordered.map((item) => (
         <G key={item.key}>{item.node}</G>
       ))}
-      {/* Name tags and speech bubbles stay in a top overlay so they are always readable. */}
+      {/* Head-level name tags stay in a top overlay so they remain readable. */}
       {characters.map((scene) => (
         <CharacterTag
           key={`tag-${scene.char.id}`}
@@ -94,9 +88,6 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
           dense={characters.length > 9}
           onSelect={onSelect}
         />
-      ))}
-      {talking.map((scene) => (
-        <SpeechBubble key={`bubble-${scene.char.id}`} scene={scene} now={now} />
       ))}
     </Svg>
   )

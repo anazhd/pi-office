@@ -1,6 +1,7 @@
 import { seatedPose } from './seated-pose'
 import { Circle, Ellipse, G, Line, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg'
-import { type Seat, type SeatKind } from './layout'
+import { type Seat } from './layout'
+import { nameTagTop, NAME_TAG_HEIGHT, NAME_TAG_OPACITY } from './name-tag'
 import type { Heading, SceneCharacter } from './use-scene-model'
 import { hashIndex, iso } from './iso'
 import { lookFor, shade, type Look } from './palette'
@@ -123,36 +124,11 @@ export function CharacterTag({
   const { x, y } = iso(gx, gy)
   return (
     <G onPress={() => onSelect(char.id)} transform={`translate(${x} ${y})`}>
-      <NameTag
-        look={look}
-        char={char}
-        selected={selected}
-        dense={dense}
-        lane={seatLane(scene.seat)}
-      />
+      <G transform={`translate(0 ${nameTagTop(scene)})`}>
+        <NameTag look={look} char={char} selected={selected} dense={dense} />
+      </G>
     </G>
   )
-}
-
-const SEAT_GROUP_START: Partial<Record<SeatKind, number>> = {
-  desk: 1,
-  sofa: 1,
-  armchair: 4,
-  beanbag: 6,
-  window: 10,
-  ottoman: 12,
-  cushion: 14,
-}
-
-/** Stagger tags within a furniture group so neighbours do not cover each other. */
-function seatLane(seat: Seat): number {
-  const num = Number(seat.id.replace(/^\D+/, ''))
-  // Overflow desks and standing spots sit about one tile apart, so cycle the lanes to keep name tags apart.
-  if (seat.row === 3 && Number.isFinite(num)) return (num - 11) % 4
-  if (seat.kind === 'standing' && Number.isFinite(num)) return num % 4
-  const start = SEAT_GROUP_START[seat.kind]
-  if (start != null && Number.isFinite(num)) return Math.max(0, Math.min(3, num - start))
-  return hashIndex(seat.id, 15, 3)
 }
 
 function NameTag({
@@ -160,35 +136,32 @@ function NameTag({
   char,
   selected,
   dense,
-  lane,
 }: {
   look: Look
   char: SceneCharacter['char']
   selected: boolean
   dense: boolean
-  lane: number
 }) {
   const full = selected || char.status !== 'idle' || !dense
   const name = full ? char.displayName : char.displayName.split(' ')[0]
   const width = Math.max(30, name.length * 3.7 + 11)
-  const tagY = lane * 7
   return (
     <G>
       <Rect
         x={-width / 2}
-        y={4 + tagY}
+        y={0}
         width={width}
-        height={9.6}
+        height={NAME_TAG_HEIGHT}
         rx={5.4}
         fill="#15110D"
-        opacity={selected ? 0.94 : 0.64}
+        opacity={selected ? NAME_TAG_OPACITY.selected : NAME_TAG_OPACITY.normal}
         stroke={selected ? '#E9A94C' : look.shirt}
         strokeOpacity={selected ? 0.9 : 0.38}
         strokeWidth={0.8}
       />
       <SvgText
         x={-3.5}
-        y={11.2 + tagY}
+        y={7.2}
         textAnchor="middle"
         fontSize={6.2}
         fontFamily="DMSans_500Medium"
@@ -196,10 +169,10 @@ function NameTag({
       >
         {name}
       </SvgText>
-      <Circle cx={width / 2 + 4.6} cy={4 + tagY + 4.8} r={4.4} fill="#E9A94C" />
+      <Circle cx={width / 2 + 4.6} cy={4.8} r={4.4} fill="#E9A94C" />
       <SvgText
         x={width / 2 + 4.6}
-        y={4 + tagY + 6.9}
+        y={6.9}
         textAnchor="middle"
         fontSize={5.4}
         fontFamily="DMSans_700Bold"
