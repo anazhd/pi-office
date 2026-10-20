@@ -126,15 +126,18 @@ test('sse socket: buffer-cap eviction destroys the real socket and frees the hub
 })
 
 test('sse socket: drain-timeout eviction destroys the real socket', async () => {
-  // Cap disabled so only the drain timer can evict. A 32MB frame exceeds the kernel socket buffers,
-  // so the paused peer never drains and the timer must fire.
+  // Cap disabled so only the drain timer can evict. Explicitly cork the real server socket: kernel TCP
+  // buffering differs across OSes (Windows may accept a whole 32MB frame despite the paused reader).
   const hub = new SseHub({ maxBufferedBytes: Number.MAX_SAFE_INTEGER, drainTimeoutMs: 50 })
   const { server, port, served } = await startHubServer(hub)
   const client = await connectPaused(port)
   try {
     await waitFor(() => hub.size === 1)
     const socket = served[0]!.req.socket
-    hub.broadcast(snapshot(2, 'big', 32 * 1024 * 1024))
+    socket.cork()
+    hub.broadcast(snapshot(2, 'big', 1024 * 1024))
+    assert.ok(socket.writableLength > 0, 'the corked socket retains the frame until eviction')
+    assert.equal(socket.writableNeedDrain, true, 'write backpressure arms the drain timer')
     assert.equal(hub.size, 1, 'not evicted synchronously; the drain timer owns it')
 
     await waitFor(() => hub.size === 0, 2_000)

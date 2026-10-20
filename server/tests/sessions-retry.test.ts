@@ -94,10 +94,11 @@ async function withFlakyStore(fn: (dir: string, store: OfficeStore, io: ReturnTy
   }
 }
 
-/** Start the store, then stop its watcher and timers so only explicit refresh() calls scan (deterministic faults). */
+/** One explicit initial scan: no watcher/timer can retry an injected failure before its assertion. */
 async function startQuiet(store: OfficeStore) {
-  await store.start()
-  store.stop()
+  // Starting and immediately stopping a watcher is not deterministic: Windows can enqueue a rescan while
+  // the first large read is still running. refresh() exercises the same scanner without starting live I/O.
+  await store.refresh()
 }
 
 async function sessionFile(dir: string, name: string, content: string): Promise<string> {
