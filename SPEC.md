@@ -4,16 +4,18 @@ A read-only, gamified "window" into Pi. An isometric open-plan office with hot d
 (lifetime, from session logs) is a character. When Pi is working with a model, that character walks to a free hot
 desk and works; when nothing is running, everyone sits in the lounge relaxing with coffee.
 
-Sibling of `/root/github/pi-stats` (read it for patterns: session tailing, systemd install script, SSE).
+Sibling of the `pi-stats` project (same patterns: session tailing, per-user service install, SSE).
 
 ## Hard rules
 
-1. **Pure viewer.** Never write to `~/.pi`, never call Pi, no extension, no hooks. Only `fs.read*`/`fs.watch`/`stat` on Pi's files. The one file the server writes is its own desk-occupancy state under `~/.local/state/pi-office/` (`PI_OFFICE_STATE_FILE` overrides).
+1. **Pure viewer.** Never write to `~/.pi`, never call Pi, no extension, no hooks. Only `fs.read*`/`fs.watch`/`stat` on Pi's files. The one file the server writes is its own desk-occupancy state (`server/paths.ts`: `PI_OFFICE_STATE_FILE`, else `~/.local/state/pi-office/` on Linux and for existing installs, else the macOS/Windows per-user app-data dir).
 2. **No content leaks.** Never send message text, thinking, tool arguments or tool output to the client. Allowed:
    provider, model, display name, tool *name*, project basename (`path.basename(cwd)`), session id hash, token
    counts, timestamps, stop reasons.
 3. **Not a gateway.** The UI has no inputs that affect Pi. Tapping a character only opens a read-only stat card.
-4. Bind to `127.0.0.1:6702`. Exposed publicly via Cloudflare tunnel as `office.anazhd.com` (done by orchestrator).
+4. Bind to `127.0.0.1:6702` and serve only loopback Host names by default. Public exposure goes through a reverse
+   proxy/tunnel and is an explicit opt-in: `PI_OFFICE_ALLOWED_HOSTS` (+ `PI_OFFICE_TRUSTED_PROXIES` for per-client
+   limits). There is no authentication; the snapshot is deliberately public wherever it is exposed (`SECURITY.md`).
 
 ## Tech stack
 
@@ -37,7 +39,9 @@ Sibling of `/root/github/pi-stats` (read it for patterns: session tailing, syste
 SPEC.md
 shared/office-types.ts         API contract (types only)
 server/
-  index.ts                     http server: static dist/ + /api/*, PORT/HOST env (default 127.0.0.1:6702)
+  index.ts                     http server: static dist/ + /api/*, security headers, injected deps (createHandler)
+  config.ts                    env config + Host/Origin/trusted-proxy policy (pure)
+  paths.ts                     Pi data + desk-state locations per OS (pure)
   sessions.ts                  scanner/tailer/watcher over ~/.pi/agent/sessions/**/*.jsonl (I/O)
   parse.ts                     pure: JSONL line -> event; per-session state reducer; roster aggregation
   office.ts                    pure: build OfficeSnapshot from session states + roster + now
@@ -49,14 +53,19 @@ src/
   scene/                       isometric math, office layout, furniture, character sprites
   components/                  HUD, character card, legend (NativeWind)
   hooks/                       useOffice(), useTick()
-scripts/install-local.sh       build web + write/enable/restart systemd user unit `pi-office`
+scripts/setup.mjs              doctor + per-user service (systemd user / launchd / Windows Startup folder)
+scripts/install-local.sh       Linux/macOS wrapper: build, then setup install-service
+scripts/build.mjs              portable production/mock web export
 shared/desk-allocation.ts      hot-desk occupancy rules (pure; used by the server and the mock)
 server/desks.ts                persisted occupancy (app-owned state file, never ~/.pi)
 ```
 
 ## Data source & state detection (server)
 
-Session dir: `$PI_OFFICE_SESSIONS_DIR` or `$PI_CODING_AGENT_DIR/sessions` or `~/.pi/agent/sessions`.
+Session dir (first match): `$PI_OFFICE_SESSIONS_DIR`, `$PI_CODING_AGENT_SESSION_DIR`, Pi's global `settings.json`
+`sessionDir` (absolute only), `$PI_CODING_AGENT_DIR/sessions`, `~/.pi/agent/sessions`. Pi-owned values expand like
+Pi does (`~`, Windows `~\`, `/c/...` shell paths, `file://`). A dir chosen only by `--session-dir` or project-local
+settings needs `PI_OFFICE_SESSIONS_DIR`.
 Files: `<dir>/<cwd-slug>/<iso>_<uuid>.jsonl`, append-only. Read once fully at startup, then tail from byte offset
 (handle partial trailing line; handle truncation/deletion → drop file state). `fs.watch(dir, {recursive:true})`
 with ~300ms debounce, plus a 5s interval tick (time-based transitions) and a 60s full directory sweep fallback.
@@ -110,8 +119,10 @@ plus models from model_change that have at least one assistant message. Aggregat
 `todayOutputTokens` (local server day), `sessions` (distinct session ids). De-duplicate forked copies of the same
 assistant message by `provider:model:message.timestamp:usage.output` (same as pi-stats).
 
-**Display names:** read `~/.pi/agent/models-store.json` (shape `{ [provider]: { models: [{id, name}] } }`, read
-only, tolerate missing/invalid) and `~/.pi/agent/models.json` similarly. Fallback heuristic: strip vendor prefix
+Models leave the visible roster after 24 hours without activity (last assistant or relevant session event), unless currently working. They return on renewed activity; lifetime stats and token totals are retained. File mtime never renews floor presence.
+
+**Display names:** read `<PI_CODING_AGENT_DIR or ~/.pi/agent>/models-store.json` (shape `{ [provider]: { models: [{id, name}] } }`, read
+only, tolerate missing/invalid) and `models.json` in the same dir similarly. Fallback heuristic: strip vendor prefix
 (`deepseek/`), strip date/numeric suffix (`-1017`, `-20251001`), `claude-opus-5-5` → `Opus 5.5`,
 `gpt-6.1-sol` → `GPT-6.1 Sol`, `deepseek-v4.1-flash` → `DeepSeek V4.1 Flash`. Unit-test the heuristic.
 
@@ -128,7 +139,12 @@ only, tolerate missing/invalid) and `~/.pi/agent/models.json` similarly. Fallbac
 - `GET /api/health` → `{ok:true}`.
 - Everything else: static from `dist/` (correct content types, `index.html` fallback for non-file paths, no
   directory traversal). `Cache-Control: no-cache` for index.html, long cache for `/_expo/static/*`.
-- CORS `Access-Control-Allow-Origin: *` on `/api/*` (future mobile app). GET/HEAD only; others 405.
+- No wildcard CORS. Same-origin and loopback dev origins work; other origins need `PI_OFFICE_ALLOWED_ORIGINS`
+  (exact origins, or `*` as a deliberate public API) and are otherwise refused with 403. Native apps send no
+  Origin and need nothing. GET/HEAD only; others 405. Unknown Host → 421, missing/malformed Host → 400.
+- Every response: CSP (self scripts, no framing), `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy:
+  no-referrer`, COOP/CORP. Streams: 64 total, 8 per client bucket (trusted-proxy aware, 429 when exceeded).
+  Static files never resolve (lexically or via symlinks) outside the real `dist/`.
 
 ## Scene (app)
 
@@ -138,6 +154,21 @@ mobile, centered on desktop). Painter's algorithm: sort drawables by `gx + gy` (
 
 Furniture (simple flat-shaded iso boxes, 3 faces each, tasteful palette, soft shadows):
 - Back walls (two sides) with big windows; window tint follows local time (day/evening/night).
+- **Seasons** (read-only, cosmetic): the viewer's local calendar picks one of four meteorological seasons,
+  northern hemisphere — Dec–Feb winter, Mar–May spring, Jun–Aug summer, Sep–Nov autumn — switching at local
+  midnight on Mar 1, Jun 1, Sep 1 and Dec 1. Season overrides, in order: a valid `?season=` URL param, then
+  `EXPO_PUBLIC_OFFICE_SEASON`, then the calendar; invalid values are ignored (never a blank office). The season
+  tints the daytime sky, the window light pool and the floor (opacity ≤ 0.03), dresses the skyline (bare /
+  blossom / full / turning trees, roof snow in winter) and hangs one small mute wall piece per wall. The season
+  carries no festive, holiday or religious decoration; an overlay is a separate, dated layer, not a fifth season.
+- **Festive overlay** (read-only, cosmetic, independent of the season): exactly one dated overlay, Halloween,
+  active on the viewer's local Oct 17 – Nov 7 inclusive every year (local month/day only, so leap years, DST
+  and time zones cannot shift it), today (Oct 19) included. Overrides, in order: a valid `?festive=`
+  (`halloween` | `none` | `auto`, where `auto` is the calendar and beats the env var), then
+  `EXPO_PUBLIC_OFFICE_FESTIVE`, then the calendar; invalid values are ignored. It paints static SVG on top of
+  whatever season it is — paper garland, felt jack-o'-lantern (lit at dusk/night), window cobweb, a bat at the
+  moon — never changes the season (sky, light pool, floor tint, trees, weather and season wall pieces are
+  untouched), never adds particles, animations or floor items, and adds no server or API work.
 - **Hot desk area:** 2 long bench desks, 4 seats per side → 8–12 desk slots, each with monitor + chair.
   Monitor screen glows + shows tiny scrolling code lines when occupied.
 - **Lounge:** sofas + armchairs + coffee table + rug, coffee machine on a counter, plants, a bookshelf.
@@ -177,15 +208,29 @@ sends state.
 
 ## Quality bar
 
-- `npm run check` = typecheck (`tsc --noEmit`) + `node --test server/tests/*.test.ts` + `npx expo export -p web`.
+- `npm run check` = typecheck (`tsc --noEmit`) + server, scene and script tests + production web export.
+  CI runs it on Linux, macOS and Windows. Tests inject clocks, platforms and file systems; they never read the real
+  `~/.pi` or depend on the wall clock.
 - Server tests cover: line parsing, status reducer table above, stale timeout, roster dedupe, display names, level
   math, snapshot build, that no content strings (message text, session_info name, tool args) appear in output.
 - Server memory: keep only per-session small state + per-character aggregates + dedupe key set.
 - 60fps not required; keep the tick ≤ 20fps and pause when the tab is hidden.
+- Season effects ride the same tick and are capped at 64 particles across all six windows (snow is the busiest
+  at 57). Under the OS reduce-motion setting the weather is frozen (half the particles, no per-frame work), while
+  the season's light and colour stay. Season/decor/frame layers are memoised on stable primitives so they only
+  re-render at a sky-phase, month or permission change. Pure modules: `src/scene/season.ts`, `sky.ts`,
+  `season-particles.ts`, `festive.ts` (unit-tested with `node --test`).
+  The festive overlay adds no particles and no per-tick work: its two `memo` layers take only primitives
+  (festive kind, sky phase) and are pure static SVG, so reduced motion needs nothing extra from them.
 
 ## Deploy
 
-`scripts/install-local.sh`: `npm run build` (expo export web → `dist/`), write
-`~/.config/systemd/user/pi-office.service` (HOST=127.0.0.1, PORT=6702, `ExecStart=<node> server/index.ts`,
-`WorkingDirectory=<repo>`, Restart=always), daemon-reload, enable, restart. Mirror pi-stats' script.
-Then `cfexpose add office 6702 public` (orchestrator does this).
+`npm run build` (portable `scripts/build.mjs`: production export with dev/preview env overrides removed), then
+`node scripts/setup.mjs install-service`: per-user, no admin, never touches `~/.pi`. Linux writes a quoted systemd
+user unit (`ExecStart="<selected node>" "<repo>/server/index.ts"`, `WorkingDirectory=<repo>`, Restart=always) and runs
+daemon-reload/enable/restart; macOS writes a launchd agent and bootstraps it in `gui/<uid>`; Windows writes a
+Startup-folder launcher. A new install is seeded from server env vars; on upgrades existing service settings win
+and only explicit `--env` / `--unset` change them. Stable Node symlinks are preferred, and version-pinned paths are
+reported by setup/doctor. Path values must be absolute; config is validated before anything is written; a mock build is refused. No
+systemd user session → actionable error and `npm start` fallback. `scripts/install-local.sh` = build + install.
+Publishing is done outside this repo (tunnel/proxy) together with `PI_OFFICE_ALLOWED_HOSTS` (see `SECURITY.md`).

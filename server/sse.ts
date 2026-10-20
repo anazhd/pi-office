@@ -4,6 +4,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { OfficeSnapshot } from '../shared/office-types.ts'
 
 export const MAX_SSE_CLIENTS = 64
+/** Streams one client bucket (address, or IPv6 /64) may hold; see clientBucket() in config.ts. */
+export const MAX_SSE_PER_CLIENT = 8
 export const MAX_SSE_BUFFERED_BYTES = 256 * 1024
 export const SSE_DRAIN_TIMEOUT_MS = 10_000
 export const SSE_HEARTBEAT_MS = 25_000
@@ -14,8 +16,9 @@ export const SSE_HEADERS = {
   'Cache-Control': 'no-cache',
   Connection: 'keep-alive',
   'X-Accel-Buffering': 'no',
-  'Access-Control-Allow-Origin': '*',
 } as const
+
+export type SseRejection = 'full' | 'client-limit'
 
 /** Hash everything except `now`, so an idle office does not resend an identical snapshot every tick. */
 export function snapshotHash(snapshot: OfficeSnapshot): string {
@@ -32,12 +35,15 @@ type Client = {
   heartbeat: ReturnType<typeof setInterval> | null
   drainTimer: ReturnType<typeof setTimeout> | null
   closed: boolean
+  /** Per-client limit bucket, or null when exempt. */
+  bucket: string | null
   /** Detach the close/drain listeners (error listeners stay; see add()). */
   detach: () => void
 }
 
 export type SseHubOptions = {
   maxClients?: number
+  maxPerClient?: number
   maxBufferedBytes?: number
   drainTimeoutMs?: number
   heartbeatMs?: number
@@ -45,6 +51,8 @@ export type SseHubOptions = {
 
 export class SseHub {
   private readonly maxClients: number
+  private readonly maxPerClient: number
+  private perBucket = new Map<string, number>()
   private readonly maxBufferedBytes: number
   private readonly drainTimeoutMs: number
   private readonly heartbeatMs: number
@@ -53,6 +61,7 @@ export class SseHub {
 
   constructor(options: SseHubOptions = {}) {
     this.maxClients = options.maxClients ?? MAX_SSE_CLIENTS
+    this.maxPerClient = options.maxPerClient ?? MAX_SSE_PER_CLIENT
     this.maxBufferedBytes = options.maxBufferedBytes ?? MAX_SSE_BUFFERED_BYTES
     this.drainTimeoutMs = options.drainTimeoutMs ?? SSE_DRAIN_TIMEOUT_MS
     this.heartbeatMs = options.heartbeatMs ?? SSE_HEARTBEAT_MS
@@ -62,9 +71,19 @@ export class SseHub {
     return this.clients.size
   }
 
-  /** Register a stream and send the current snapshot. Returns false when the hub is full (caller replies 503). */
-  add(req: IncomingMessage, res: ServerResponse, snapshot: OfficeSnapshot): boolean {
-    if (this.clients.size >= this.maxClients) return false
+  /** Why a new stream for `bucket` would be refused right now, or null when it would be accepted. */
+  rejection(bucket: string | null = null): SseRejection | null {
+    if (this.clients.size >= this.maxClients) return 'full'
+    if (bucket !== null && (this.perBucket.get(bucket) ?? 0) >= this.maxPerClient) return 'client-limit'
+    return null
+  }
+
+  /**
+   * Register a stream and send the current snapshot. Returns false when the hub is full or `bucket` is at its
+   * per-client limit (see rejection(); the caller replies 503/429).
+   */
+  add(req: IncomingMessage, res: ServerResponse, snapshot: OfficeSnapshot, bucket: string | null = null): boolean {
+    if (this.rejection(bucket)) return false
 
     const client: Client = {
       req,
@@ -72,6 +91,7 @@ export class SseHub {
       heartbeat: null,
       drainTimer: null,
       closed: false,
+      bucket,
       detach: () => {},
     }
     const onGone = () => this.release(client, true)
@@ -98,6 +118,7 @@ export class SseHub {
     res.write('retry: 3000\n\n')
 
     this.clients.add(client)
+    if (bucket !== null) this.perBucket.set(bucket, (this.perBucket.get(bucket) ?? 0) + 1)
     client.heartbeat = setInterval(() => this.send(client, `event: heartbeat\ndata: ${Date.now()}\n\n`), this.heartbeatMs)
     client.heartbeat.unref()
     this.send(client, sseFrame(snapshot))
@@ -136,6 +157,11 @@ export class SseHub {
     client.heartbeat = null
     client.drainTimer = null
     this.clients.delete(client)
+    if (client.bucket !== null) {
+      const left = (this.perBucket.get(client.bucket) ?? 1) - 1
+      if (left > 0) this.perBucket.set(client.bucket, left)
+      else this.perBucket.delete(client.bucket)
+    }
     client.detach()
     if (destroy && !client.res.destroyed) {
       try {

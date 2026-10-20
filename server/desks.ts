@@ -3,8 +3,8 @@
 // The state file is app-owned (never under ~/.pi). It survives restarts and deploys, so the people already at
 // their desks keep them. Writes happen only when an assignment changes, and go through a temp file + rename.
 import { mkdirSync, readFileSync, renameSync, writeFileSync, rmSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
+import { deskStatePath } from './paths.ts'
 import {
   candidatesFor,
   emptyDeskPlan,
@@ -20,12 +20,12 @@ import type { OfficeSnapshot } from '../shared/office-types.ts'
 
 export const DESK_STATE_VERSION = 1
 
-/** `PI_OFFICE_STATE_FILE`, else `$XDG_STATE_HOME/pi-office/desks.json`, else `~/.local/state/pi-office/desks.json`. */
+/**
+ * `PI_OFFICE_STATE_FILE`, else `$XDG_STATE_HOME/pi-office/desks.json`, else `~/.local/state/pi-office/desks.json`
+ * on Linux; macOS/Windows use their per-user app data dir unless that legacy file already exists (server/paths.ts).
+ */
 export function deskStateFile(): string {
-  const explicit = process.env.PI_OFFICE_STATE_FILE
-  if (explicit) return explicit
-  const stateHome = process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state')
-  return join(stateHome, 'pi-office', 'desks.json')
+  return deskStatePath()
 }
 
 /**
@@ -59,6 +59,11 @@ export type DeskAllocatorOptions = {
   pick?: DeskPick
   now?: () => number
   warn?: (message: string) => void
+  /**
+   * Coalesce writes: persist at most once per this many ms, off the request path. Omit for an immediate
+   * synchronous write per change (tests). The server uses a short delay and flushes on shutdown.
+   */
+  writeDelayMs?: number
 }
 
 /** Stateful wrapper: reconciles every snapshot against the occupancy and persists real changes. */
@@ -68,11 +73,18 @@ export class DeskAllocator {
   private readonly pick: DeskPick
   private readonly warn: (message: string) => void
   private warned = new Set<string>()
+  private readonly writeDelayMs: number | null
+  private dirty = false
+  private timer: ReturnType<typeof setTimeout> | null = null
 
   constructor(options: DeskAllocatorOptions = {}) {
     this.file = options.file ?? null
     this.pick = options.pick ?? randomPick
     this.warn = options.warn ?? ((message) => console.warn(`[pi-office] ${message}`))
+    this.writeDelayMs =
+      typeof options.writeDelayMs === 'number' && Number.isFinite(options.writeDelayMs) && options.writeDelayMs >= 0
+        ? options.writeDelayMs
+        : null
     const plan = emptyDeskPlan()
     if (this.file) {
       try {
@@ -101,8 +113,35 @@ export class DeskAllocator {
     const next = reconcileDesks(this.plan, candidatesFor(snapshot), snapshot.now, this.pick)
     const changed = !sameAssignments(this.plan.assignments, next.assignments)
     this.plan = next
-    if (changed) this.save()
+    if (changed) this.markDirty()
     return withDesks(snapshot, next.assignments)
+  }
+
+  /** Write any pending change now (shutdown, tests). Safe to call repeatedly. */
+  flush(): void {
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    if (!this.dirty) return
+    this.dirty = false
+    this.save()
+  }
+
+  private markDirty(): void {
+    this.dirty = true
+    if (!this.file) {
+      this.dirty = false
+      return
+    }
+    if (this.writeDelayMs === null) {
+      this.flush()
+      return
+    }
+    if (this.timer) return
+    this.timer = setTimeout(() => {
+      this.timer = null
+      this.flush()
+    }, this.writeDelayMs)
+    this.timer.unref()
   }
 
   private save(): void {

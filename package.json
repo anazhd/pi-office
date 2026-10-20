@@ -2,26 +2,34 @@
   "name": "pi-office",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "author": "Anaz Haidhar (https://anazhd.com)",
+  "engines": {
+    "node": ">=24.12.0"
+  },
   "main": "expo-router/entry",
   "scripts": {
     "start": "node server/index.ts",
+    "setup": "node scripts/setup.mjs",
+    "doctor": "node scripts/setup.mjs doctor",
     "dev": "expo start --web",
-    "build": "EXPO_PUBLIC_OFFICE_MOCK= expo export -p web",
-    "build:mock": "EXPO_PUBLIC_OFFICE_MOCK=1 expo export -p web",
+    "build": "node scripts/build.mjs",
+    "build:mock": "node scripts/build.mjs --mock",
     "typecheck": "tsc --noEmit",
     "test:browser": "node scripts/browser-smoke.mjs",
     "test:server": "node --test server/tests/*.test.ts",
     "test:scene": "node --test src/scene/tests/*.test.ts",
-    "check": "npm run typecheck && npm run test:server && npm run test:scene && npm run build"
+    "test:scripts": "node --test scripts/*.test.mjs",
+    "check": "npm run typecheck && npm run test:server && npm run test:scene && npm run test:scripts && npm run build"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo-google-fonts/fraunces": "^0.4.1",
-    "expo": "~58.0.14",
+    "expo": "~58.0.16",
     "expo-constants": "~58.0.12",
-    "expo-font": "~58.0.8",
+    "expo-font": "~58.0.9",
     "expo-linking": "~58.0.13",
-    "expo-router": "~58.0.23",
+    "expo-router": "~58.0.24",
     "expo-splash-screen": "~58.0.10",
     "expo-status-bar": "~58.0.3",
     "expo-system-ui": "~58.0.6",
@@ -36,8 +44,12 @@
     "react-native-web": "~0.21.4",
     "react-native-worklets": "0.13.0"
   },
+  "overrides": {
+    "postcss-selector-parser": "7.1.6",
+    "xcode": { "uuid": "11.1.1" }
+  },
   "devDependencies": {
-    "@types/node": "^24.10.0",
+    "@types/node": "^24.19.2",
     "@types/react": "~19.3.0",
     "agent-browser": "^0.39.1",
     "tailwindcss": "^3.4.17",

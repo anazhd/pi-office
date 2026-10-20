@@ -5,8 +5,8 @@
 // truncated files drop their state. Nothing is ever written to ~/.pi.
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import { watch, type FSWatcher } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { piAgentDir, piSessionsDir } from './paths.ts'
 import type { OfficeSnapshot } from '../shared/office-types.ts'
 import {
   applyEvent,
@@ -24,9 +24,9 @@ import { DeskAllocator } from './desks.ts'
 export const DEBOUNCE_MS = 300
 export const TICK_MS = 5_000
 export const SWEEP_MS = 60_000
-/** A single line larger than this is skipped rather than buffered forever. */
-const MAX_CHUNK_BYTES = 8 * 1024 * 1024
-const MAX_LINE_BYTES = 64 * 1024 * 1024
+/** Read size per pass step. A single line larger than MAX_LINE_BYTES is skipped rather than buffered. */
+export const MAX_CHUNK_BYTES = 8 * 1024 * 1024
+export const MAX_LINE_BYTES = 64 * 1024 * 1024
 
 /** The stat fields the scanner uses. */
 export type SessionFileStat = { size: number; mtimeMs: number; dev: number; ino: number }
@@ -78,20 +78,24 @@ export type FileState = {
    * is unchanged. After a reset, `offset` is 0 and `state` is empty, so the retry is a full reparse.
    */
   needsRetry: boolean
+  /**
+   * Bytes after `offset` already scanned and known to hold no newline (a half-written trailing line). The next
+   * pass only reads bytes after them, so a growing partial line is never re-read from its start.
+   */
+  pending: number
+  /** Inside a line longer than MAX_LINE_BYTES: discard bytes up to and including its newline. */
+  skipping: boolean
   state: SessionState
 }
 
+/** `PI_OFFICE_SESSIONS_DIR`, else `PI_CODING_AGENT_DIR/sessions`, else `~/.pi/agent/sessions` (server/paths.ts). */
 export function sessionsDir(): string {
-  const explicit = process.env.PI_OFFICE_SESSIONS_DIR
-  if (explicit) return explicit
-  const agentDir = process.env.PI_CODING_AGENT_DIR
-  if (agentDir) return join(agentDir, 'sessions')
-  return join(homedir(), '.pi', 'agent', 'sessions')
+  return piSessionsDir()
 }
 
-/** Directory holding models-store.json / models.json (Pi's config dir). */
+/** Directory holding models-store.json / models.json (Pi's config dir); same rule as the sessions parent. */
 export function agentDir(): string {
-  return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent')
+  return piAgentDir()
 }
 
 /** Local server midnight for `now`. */
@@ -139,7 +143,10 @@ export class OfficeStore {
   readonly dir: string
   private files = new Map<string, FileState>()
   private version = 0
-  private roster = new IncrementalRoster(startOfLocalDay(Date.now()))
+  private readonly now: () => number
+  private readonly maxChunkBytes: number
+  private readonly maxLineBytes: number
+  private roster: IncrementalRoster
   private nameFor: NameResolver = createNameResolver([])
   private readonly fsys: SessionFileSystem
   /** Authoritative hot-desk occupancy; applied to every snapshot. */
@@ -157,10 +164,15 @@ export class OfficeStore {
     dir: string,
     fsys: SessionFileSystem = nodeSessionFileSystem,
     desks: DeskAllocator = new DeskAllocator(),
+    options: { now?: () => number; maxChunkBytes?: number; maxLineBytes?: number } = {},
   ) {
     this.dir = dir
     this.fsys = fsys
     this.desks = desks
+    this.now = options.now ?? Date.now
+    this.maxChunkBytes = options.maxChunkBytes ?? MAX_CHUNK_BYTES
+    this.maxLineBytes = options.maxLineBytes ?? MAX_LINE_BYTES
+    this.roster = new IncrementalRoster(startOfLocalDay(this.now()))
   }
 
   /** Start watching and resolve after the first full scan. */
@@ -193,6 +205,7 @@ export class OfficeStore {
     this.debounce = null
     this.tick = null
     this.sweep = null
+    this.desks.flush()
   }
 
   /** Force a scan now (tests, and after startup when callers want the freshest state). */
@@ -299,6 +312,8 @@ export class OfficeStore {
     const removed = this.dropFile(file)
     entry.state = emptyState()
     entry.offset = 0
+    entry.pending = 0
+    entry.skipping = false
     entry.needsRetry = true
     return removed
   }
@@ -312,20 +327,20 @@ export class OfficeStore {
     // Observed metadata: decides what to do, and is committed below only after a clean pass.
     const info = await this.fsys.stat(file)
     const size = info.size
-    const mtime = Number.isFinite(info.mtimeMs) ? info.mtimeMs : Date.now()
+    const mtime = Number.isFinite(info.mtimeMs) ? info.mtimeMs : this.now()
     const dev = Number(info.dev)
     const ino = Number(info.ino)
 
     let changed = false
     let entry = this.files.get(file)
     if (!entry) {
-      entry = { offset: 0, size: 0, mtime: 0, dev, ino, needsRetry: true, state: emptyState() }
+      entry = { offset: 0, size: 0, mtime: 0, dev, ino, needsRetry: true, pending: 0, skipping: false, state: emptyState() }
       this.files.set(file, entry)
     } else {
       // Atomic replace (new inode), truncation (also inside a partial tail: offset may be past the size),
       // or same size with a new mtime (bytes may have been overwritten in place): reparse from 0.
       const replaced = entry.dev !== dev || entry.ino !== ino
-      const shrunk = size < Math.max(entry.size, entry.offset)
+      const shrunk = size < Math.max(entry.size, entry.offset + entry.pending)
       const rewritten = size === entry.size && mtime !== entry.mtime
       if (replaced || shrunk || rewritten) {
         changed = this.resetFile(file, entry)
@@ -336,36 +351,59 @@ export class OfficeStore {
     }
 
     let added = false
-    let chunk = MAX_CHUNK_BYTES
+    const consume = (buf: Buffer, start: number, end: number) => {
+      const { events } = parseChunk(buf.toString('utf8', start, end))
+      for (const ev of events) {
+        const contribution = applyEvent(entry.state, ev)
+        if (contribution) this.roster.add(contribution, file)
+      }
+      if (events.length > 0) added = true
+    }
     try {
       const fh = await this.fsys.open(file)
       try {
-        while (entry.offset < size) {
-          const length = Math.min(size - entry.offset, chunk)
+        // Every byte is read once while scanning for newlines; only a line that spans passes/chunks is read a
+        // second time, once, when its newline arrives. Only complete lines are consumed: the tail may be a
+        // half-written line or half a multi-byte character.
+        while (entry.offset + entry.pending < size) {
+          const from = entry.offset + entry.pending
+          const length = Math.min(size - from, this.maxChunkBytes)
           const buf = Buffer.allocUnsafe(length)
-          const { bytesRead } = await fh.read(buf, 0, length, entry.offset)
+          const { bytesRead } = await fh.read(buf, 0, length, from)
           if (bytesRead === 0) break
-          // Only consume complete lines; the tail may be a half-written line or half a multi-byte character.
-          const end = buf.lastIndexOf(10, bytesRead - 1) + 1
-          if (end === 0) {
-            if (entry.offset + bytesRead >= size) break // partial last line: wait for the rest
-            if (chunk >= MAX_LINE_BYTES) {
-              // Degenerate line with no newline: skip it instead of buffering it forever.
-              entry.offset += bytesRead
-              chunk = MAX_CHUNK_BYTES
-              continue
+          const first = buf.indexOf(10)
+          if (first < 0 || first >= bytesRead) {
+            entry.pending += bytesRead
+            if (entry.pending > this.maxLineBytes) {
+              // Degenerate line: drop what we have and discard the rest of it instead of buffering it.
+              entry.offset += entry.pending
+              entry.pending = 0
+              entry.skipping = true
             }
-            chunk *= 2 // a single line longer than the current chunk
             continue
           }
-          chunk = MAX_CHUNK_BYTES
-          const { events } = parseChunk(buf.toString('utf8', 0, end))
-          for (const ev of events) {
-            const contribution = applyEvent(entry.state, ev)
-            if (contribution) this.roster.add(contribution, file)
+          const last = buf.lastIndexOf(10, bytesRead - 1)
+          if (entry.skipping) {
+            entry.skipping = false
+          } else if (entry.pending + first + 1 > this.maxLineBytes) {
+            // The spanned line ends here but is over the limit: drop it without buffering it.
+          } else if (entry.pending > 0) {
+            // The line started in an earlier chunk/pass: read it whole, exactly once.
+            const lineLength = entry.pending + first + 1
+            const line = Buffer.allocUnsafe(lineLength)
+            const got = await fh.read(line, 0, lineLength, entry.offset)
+            if (got.bytesRead < lineLength) throw new Error('short read')
+            consume(line, 0, lineLength)
+          } else {
+            consume(buf, 0, first + 1)
           }
-          entry.offset += end
-          if (events.length > 0) added = true
+          entry.offset = from + first + 1
+          entry.pending = 0
+          if (last > first) {
+            consume(buf, first + 1, last + 1)
+            entry.offset = from + last + 1
+          }
+          entry.pending = bytesRead - (last + 1)
         }
       } finally {
         await fh.close()
@@ -411,7 +449,7 @@ export class OfficeStore {
   }
 
   /** Current office snapshot, with each character's desk reconciled against the persisted occupancy. */
-  snapshot(now = Date.now()): OfficeSnapshot {
+  snapshot(now = this.now()): OfficeSnapshot {
     const dayStart = startOfLocalDay(now)
     return this.desks.apply(
       buildOfficeSnapshot({

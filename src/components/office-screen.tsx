@@ -3,7 +3,9 @@ import { Text, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useOffice } from '@/hooks/use-office'
 import { useTick } from '@/hooks/use-tick'
+import { parseFestive, type FestiveOverride } from '@/scene/festive'
 import { OfficeScene } from '@/scene/office-scene'
+import { parseSeason, type Season } from '@/scene/season'
 import { ActivityTicker } from './activity-ticker'
 import { CharacterCard } from './character-card'
 import { RosterStrip } from './roster-strip'
@@ -11,7 +13,18 @@ import { TopBar } from './top-bar'
 
 const SCENE_RATIO = 820 / 612
 
-export function OfficeScreen() {
+// Written out in full so Expo inlines it at build time. An invalid value is ignored.
+const ENV_SEASON = parseSeason(process.env.EXPO_PUBLIC_OFFICE_SEASON)
+const ENV_FESTIVE = parseFestive(process.env.EXPO_PUBLIC_OFFICE_FESTIVE)
+
+type Props = {
+  /** ?season= from the URL. Invalid values are ignored in favour of the env override. */
+  seasonOverride?: Season | null
+  /** ?festive= from the URL. Invalid values are ignored in favour of the env override. */
+  festiveOverride?: FestiveOverride | null
+}
+
+export function OfficeScreen({ seasonOverride, festiveOverride }: Props) {
   const { snapshot, connection, error, lastUpdate } = useOffice()
   const now = useTick(20)
   const insets = useSafeAreaInsets()
@@ -75,6 +88,8 @@ export function OfficeScreen() {
               now={now}
               selectedId={selectedId}
               onSelect={(id) => setSelectedId(id)}
+              seasonOverride={seasonOverride ?? ENV_SEASON}
+              festiveOverride={festiveOverride ?? ENV_FESTIVE}
             />
 
             {empty ? (

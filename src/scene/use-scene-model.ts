@@ -3,21 +3,16 @@ import type { Character, OfficeSnapshot } from '@/api/types'
 import type { Seat } from './layout'
 import {
   initialPlannerState,
+  poseFor,
   positionAt,
   step,
+  type CharacterPose,
   type Heading,
   type Plan,
   type PlannerState,
 } from './scene-planner'
 
-export type { Heading } from './scene-planner'
-
-/**
- * seated: idle in the lounge. typing: working at a desk. waiting: working but every desk
- * is taken, so the character stands by the overflow bench instead of pretending to type.
- * relaxing: idle, but still at its desk inside the grace window (leaning back, stretching).
- */
-export type CharacterPose = 'seated' | 'walking' | 'typing' | 'waiting' | 'relaxing'
+export type { CharacterPose, Heading } from './scene-planner'
 
 export type SceneCharacter = {
   char: Character
@@ -62,16 +57,7 @@ export function useSceneModel(snapshot: OfficeSnapshot | null, now: number): Sce
     for (const plan of state.plans.values()) {
       const position = positionAt(plan, now)
       const walking = position.walking
-      const working = plan.char.status !== 'idle'
-      const pose: CharacterPose = walking
-        ? 'walking'
-        : working
-          ? plan.deskIndex != null
-            ? 'typing'
-            : 'waiting'
-          : plan.deskIndex != null
-            ? 'relaxing'
-            : 'seated'
+      const pose = poseFor(plan, now)
 
       out.push({
         char: plan.char,

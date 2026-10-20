@@ -44,6 +44,13 @@ export type PlannerState = {
   lastSnapshot: OfficeSnapshot | null
 }
 
+/**
+ * seated: idle in the lounge. typing: working at a desk. waiting: working but every desk
+ * is taken, so the character stands by the overflow bench instead of pretending to type.
+ * relaxing: idle, but still at its desk inside the grace window (leaning back, stretching).
+ */
+export type CharacterPose = 'seated' | 'walking' | 'typing' | 'waiting' | 'relaxing'
+
 export type PlanPosition = {
   gx: number
   gy: number
@@ -174,6 +181,17 @@ export function positionAt(plan: Plan, now: number): PlanPosition {
   }
 
   return { gx, gy, progress, strideTiles, heading, walking, distance: strideTiles }
+}
+
+/**
+ * What a planned character is doing at `now`. Only `typing` (working, settled at a desk) lights that desk's
+ * monitor; a walker, a waiting or relaxing character never does. Pure: depends on the plan and the clock only.
+ */
+export function poseFor(plan: Plan, now: number): CharacterPose {
+  if (positionAt(plan, now).walking) return 'walking'
+  const working = plan.char.status !== 'idle'
+  if (working) return plan.deskIndex != null ? 'typing' : 'waiting'
+  return plan.deskIndex != null ? 'relaxing' : 'seated'
 }
 
 function desksEqual(a: Map<string, number>, b: Map<string, number>): boolean {

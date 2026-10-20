@@ -17,6 +17,7 @@ import {
 import type { ActivityStatus, Character, OfficeSnapshot } from '../../shared/office-types.ts'
 import { DeskAllocator, deskStateFile, parseDeskState } from '../desks.ts'
 import { OfficeStore } from '../sessions.ts'
+import { deskStatePath } from '../paths.ts'
 
 const first: DeskPick = (free) => free[0]
 const last: DeskPick = (free) => free[free.length - 1]
@@ -214,20 +215,40 @@ test('persisted state parses tolerantly: corrupt, duplicate, out-of-range and ma
 })
 
 test('deskStateFile is app-owned: explicit env wins, default is under ~/.local/state, never ~/.pi', () => {
+  // Linux rules via the pure resolver, so the assertion holds on every CI OS; deskStateFile() delegates to it.
+  const linux = (env: Record<string, string>) => deskStatePath({ env, platform: 'linux', home: '/home/u', exists: () => false })
+  assert.equal(linux({ PI_OFFICE_STATE_FILE: '/tmp/explicit-desks.json' }), '/tmp/explicit-desks.json')
+  assert.equal(linux({ XDG_STATE_HOME: '/tmp/xdg-state' }), '/tmp/xdg-state/pi-office/desks.json')
+  const file = linux({})
+  assert.equal(file, '/home/u/.local/state/pi-office/desks.json')
+  assert.equal(file.includes('/.pi/'), false)
   const saved = { ...process.env }
   try {
-    process.env.PI_OFFICE_STATE_FILE = '/tmp/explicit-desks.json'
-    assert.equal(deskStateFile(), '/tmp/explicit-desks.json')
-    delete process.env.PI_OFFICE_STATE_FILE
-    process.env.XDG_STATE_HOME = '/tmp/xdg-state'
-    assert.equal(deskStateFile(), '/tmp/xdg-state/pi-office/desks.json')
-    delete process.env.XDG_STATE_HOME
-    const file = deskStateFile()
-    assert.match(file, /\.local\/state\/pi-office\/desks\.json$/)
-    assert.equal(file.includes('/.pi/'), false)
+    process.env.PI_OFFICE_STATE_FILE = join(tmpdir(), 'explicit-desks.json')
+    assert.equal(deskStateFile(), join(tmpdir(), 'explicit-desks.json'))
   } finally {
     process.env = saved
   }
+})
+
+test('state file: deferred writes coalesce off the request path and flush on demand', async () => {
+  await withDir(async (dir) => {
+    const file = join(dir, 'state', 'desks.json')
+    const allocator = new DeskAllocator({ file, pick: first, writeDelayMs: 60_000 })
+    allocator.apply(snapshotOf([['p/a', 'tool']], 0))
+    allocator.apply(snapshotOf([['p/a', 'tool'], ['p/b', 'tool']], 1))
+    await assert.rejects(readFile(file, 'utf8'), /ENOENT/, 'apply() itself never touches the disk')
+    allocator.flush()
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).assignments, { 'p/a': 0, 'p/b': 1 })
+    await writeFile(file, 'SENTINEL')
+    allocator.flush()
+    assert.equal(await readFile(file, 'utf8'), 'SENTINEL', 'nothing pending: flush writes nothing')
+
+    const quick = new DeskAllocator({ file: join(dir, 'quick.json'), pick: first, writeDelayMs: 5 })
+    quick.apply(snapshotOf([['p/c', 'tool']], 0))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.deepEqual(JSON.parse(await readFile(join(dir, 'quick.json'), 'utf8')).assignments, { 'p/c': 0 })
+  })
 })
 
 async function withDir(fn: (dir: string) => Promise<void>) {
@@ -375,7 +396,7 @@ test('office store: refresh after departures keeps the remaining workers at thei
     const sessions = join(dir, 'sessions', 'proj')
     const state = join(dir, 'state', 'desks.json')
     await mkdir(sessions, { recursive: true })
-    const t0 = Date.now()
+    const t0 = new Date(2026, 9, 18, 12, 0, 0).getTime() // fixed local noon, not the real clock
     const models = [
       ['anthropic', 'claude-a'],
       ['openai', 'gpt-b'],
@@ -386,7 +407,7 @@ test('office store: refresh after departures keeps the remaining workers at thei
       await writeFile(join(sessions, `s${i}.jsonl`), sessionText(`s${i}`, provider, model, 'toolUse', t0))
     }
 
-    const store = new OfficeStore(join(dir, 'sessions'), undefined, new DeskAllocator({ file: state, pick: first }))
+    const store = new OfficeStore(join(dir, 'sessions'), undefined, new DeskAllocator({ file: state, pick: first }), { now: () => t0 })
     await store.start()
     try {
       const seatedAt = (snap: OfficeSnapshot) =>
@@ -413,7 +434,7 @@ test('office store: refresh after departures keeps the remaining workers at thei
       }
 
       // Browser refresh (new snapshot reader, same server state file) and a server restart: same seats.
-      const restarted = new OfficeStore(join(dir, 'sessions'), undefined, new DeskAllocator({ file: state, pick: last }))
+      const restarted = new OfficeStore(join(dir, 'sessions'), undefined, new DeskAllocator({ file: state, pick: last }), { now: () => t0 })
       await restarted.start()
       try {
         const afterRefresh = seatedAt(restarted.snapshot(idleAt + DESK_GRACE_MS + 5_000))

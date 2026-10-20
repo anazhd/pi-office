@@ -2,4 +2,11 @@ node_modules/
 dist/
 .expo/
 *.log
-.env*.local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# Local runtime/config data and generated service files must never be published.
+.pi-office/
+coverage/

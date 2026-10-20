@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  FLOOR_INACTIVE_MS,
   STALE_MS,
   TOOL_STALE_MS,
   buildOfficeSnapshot,
@@ -193,6 +194,27 @@ test('snapshot: stale and model-less sessions do not count as active', () => {
   assert.equal(snap.totals.activeSessions, 0)
   assert.equal(snap.characters[0].status, 'idle')
   assert.deepEqual(snap.characters[0].active, [])
+})
+
+test('snapshot: inactive models leave at 24 hours and return without losing stats', () => {
+  const model = entry({
+    id: 'anthropic/claude-opus-5-5', provider: 'anthropic', model: 'claude-opus-5-5',
+    lastSeen: NOW - FLOOR_INACTIVE_MS, outputTokens: 4321,
+  })
+  const snapshot = (now: number, sessions: SessionView[] = []) =>
+    buildOfficeSnapshot({ now, sessions, roster: [model], nameFor: (_p, m) => m })
+  assert.equal(snapshot(NOW - 1).characters.length, 1)
+  assert.equal(snapshot(NOW).characters.length, 0)
+  assert.equal(snapshot(NOW + 1).characters.length, 0)
+  assert.equal(snapshot(NOW).totals.lifetimeOutputTokens, 4321)
+  // Merely touching an old session cannot keep a model on the floor.
+  assert.equal(snapshot(NOW, [session({ status: 'idle', since: model.lastSeen, mtime: NOW })]).characters.length, 0)
+  // Recent work, including a just-completed turn, brings the character back.
+  for (const status of ['thinking', 'tool', 'idle'] as const) {
+    const returned = snapshot(NOW, [session({ status })]).characters[0]
+    assert.equal(returned.xp, 4321)
+    assert.equal(returned.stats.lastSeen, model.lastSeen)
+  }
 })
 
 test('snapshot: empty roster -> empty characters', () => {

@@ -2,36 +2,62 @@ import { memo } from 'react'
 import { shortTagName } from './short-tag-name'
 import { G, Svg } from 'react-native-svg'
 import type { OfficeSnapshot } from '@/api/types'
+import { useReducedMotion } from '@/hooks/use-reduced-motion'
 import { Backdrop } from './backdrop'
 import { CharacterSprite, CharacterTag } from './character-sprite'
 import { sortBackToFront } from './depth'
+import { deskLights } from './desk-lights'
 import { buildFurniture } from './furniture'
 import { armchairForegroundKeys, characterBounds, furnitureContaining, seatFurnitureKeys } from './furniture-bounds'
 import { VIEWBOX } from './iso'
+import { resolveFestive, type FestiveOverride } from './festive'
+import { FestiveDecor, FestiveOutside } from './festive-layers'
+import { resolveSeason, type Season } from './season'
+import { SeasonClips, SeasonDecor, SeasonOutside, WindowFrames } from './season-layers'
+import { skyPhase } from './sky'
 import type { SceneItem } from './types'
 import { useSceneModel } from './use-scene-model'
 
 const StaticBackdrop = memo(Backdrop)
+const StaticSeasonClips = memo(SeasonClips)
+const StaticWindowFrames = memo(WindowFrames)
+const StaticSeasonDecor = memo(SeasonDecor)
+const StaticFestiveOutside = memo(FestiveOutside)
+const StaticFestiveDecor = memo(FestiveDecor)
 
 type Props = {
   snapshot: OfficeSnapshot | null
   now: number
   selectedId: string | null
   onSelect: (id: string) => void
+  /** ?season= or EXPO_PUBLIC_OFFICE_SEASON; null means "follow the calendar". */
+  seasonOverride?: Season | null
+  /** ?festive= or EXPO_PUBLIC_OFFICE_FESTIVE; null/auto means "follow the local calendar". */
+  festiveOverride?: FestiveOverride | null
 }
 
-export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
+export function OfficeScene({
+  snapshot,
+  now,
+  selectedId,
+  onSelect,
+  seasonOverride,
+  festiveOverride,
+}: Props) {
   const characters = useSceneModel(snapshot, now)
+  const reducedMotion = useReducedMotion()
 
-  // Monitors light up while someone types. Chairs drop their back whenever a worker sprite sits in
-  // them (typing OR relaxing at the desk), because the sprite draws its own seat and back.
-  const lit = new Set<number>()
-  const seated = new Set<number>()
-  for (const scene of characters) {
-    if (scene.deskIndex == null || scene.pose === 'walking') continue
-    if (scene.pose === 'typing') lit.add(scene.deskIndex)
-    if (scene.pose === 'typing' || scene.pose === 'relaxing') seated.add(scene.deskIndex)
-  }
+  // The wall dressing only changes every minute or so, so it shares one coarse clock.
+  const sceneClock = Math.floor(now / 30000) * 30000
+  const season = resolveSeason(sceneClock, seasonOverride)
+  // The festive overlay is independent: it never changes the season, the season never changes it.
+  const festive = resolveFestive(sceneClock, festiveOverride)
+  const phase = skyPhase(sceneClock)
+  const night = phase === 'night'
+
+  // Monitors light up while someone types (see desk-lights.ts). Chairs drop their back whenever a worker
+  // sprite sits in them (typing OR relaxing at the desk), because the sprite draws its own seat and back.
+  const { lit, seated } = deskLights(characters)
 
   const items: SceneItem[] = buildFurniture(lit, now, seated)
 
@@ -72,10 +98,19 @@ export function OfficeScene({ snapshot, now, selectedId, onSelect }: Props) {
 
   return (
     <Svg viewBox={VIEWBOX} width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+      <StaticSeasonClips />
       <StaticBackdrop
         activeSessions={snapshot?.totals.activeSessions ?? 0}
-        now={Math.floor(now / 30000) * 30000}
+        now={sceneClock}
+        season={season}
       />
+      {/* weather outside the glass, then the frames so it falls behind the mullions */}
+      <SeasonOutside season={season} phase={phase} t={reducedMotion ? null : now} />
+      <StaticFestiveOutside festive={festive} night={night} />
+      <StaticWindowFrames night={night} season={season} />
+      <StaticSeasonDecor season={season} night={night} />
+      {/* dated overlay, on top of whatever season it is and behind every solid object */}
+      <StaticFestiveDecor festive={festive} phase={phase} />
       {ordered.map((item) => (
         <G key={item.key}>{item.node}</G>
       ))}

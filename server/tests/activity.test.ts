@@ -7,7 +7,8 @@ import { applyEvent, emptyState, parseEvent } from '../parse.ts'
 import { OfficeStore } from '../sessions.ts'
 import { STALE_MS, TOOL_STALE_MS } from '../office.ts'
 
-const NOW = Date.now()
+// Fixed local noon: no assertion depends on the real clock or can straddle a local midnight.
+const NOW = new Date(2026, 9, 18, 12, 0, 0).getTime()
 const header = (id: string) => ({ type: 'session', id, cwd: '/fixture/project', timestamp: new Date(NOW).toISOString() })
 const message = (role: string, stopReason?: string, isError = false, ts = NOW) => ({
   type: 'message', timestamp: new Date(ts).toISOString(),
@@ -55,7 +56,7 @@ test('reader: metadata cannot revive terminal or historical work; concurrent sam
   const ended = join(dir, 'ended.jsonl')
   const active = join(dir, 'active.jsonl')
   const abandoned = join(dir, 'abandoned.jsonl')
-  const store = new OfficeStore(dir)
+  const store = new OfficeStore(dir, undefined, undefined, { now: () => NOW })
   try {
     await writeFile(ended, encode([header('ended'), message('assistant', 'error'), message('toolResult')]))
     await writeFile(active, encode([header('active'), message('assistant', 'toolUse')]))

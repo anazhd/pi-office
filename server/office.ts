@@ -6,6 +6,9 @@ import type { RosterEntry } from './parse.ts'
 export const STALE_MS = 10 * 60_000
 export const TOOL_STALE_MS = 60 * 60_000
 
+/** Idle models leave the floor after a day; lifetime roster statistics remain intact. */
+export const FLOOR_INACTIVE_MS = 24 * 60 * 60_000
+
 /** Gamification thresholds. */
 export const XP_PER_LEVEL = 2000
 
@@ -78,7 +81,12 @@ export function buildOfficeSnapshot(input: SnapshotInput): OfficeSnapshot {
 
   const activeByModel = new Map<string, OfficeSnapshot['characters'][number]['active']>()
   let activeSessions = 0
+  const lastActivityByModel = new Map<string, number>()
   for (const s of sessions) {
+    if (s.provider && s.model && s.since > 0) {
+      const id = `${s.provider}/${s.model}`
+      lastActivityByModel.set(id, Math.max(lastActivityByModel.get(id) ?? 0, s.since))
+    }
     if (effectiveStatus(s, now) === 'idle') continue
     activeSessions++
     const id = `${s.provider}/${s.model}`
@@ -102,8 +110,14 @@ export function buildOfficeSnapshot(input: SnapshotInput): OfficeSnapshot {
   }
 
   const characters: Character[] = []
+  let todayOutputTokens = 0
+  let lifetimeOutputTokens = 0
   for (const entry of input.roster) {
+    todayOutputTokens += entry.todayOutputTokens
+    lifetimeOutputTokens += entry.outputTokens
     const active = activeByModel.get(entry.id) ?? []
+    const lastActivity = Math.max(entry.lastSeen, lastActivityByModel.get(entry.id) ?? 0)
+    if (active.length === 0 && now - lastActivity >= FLOOR_INACTIVE_MS) continue
     const status: ActivityStatus =
       active.length === 0 ? 'idle' : active.some((a) => a.status === 'tool') ? 'tool' : 'thinking'
     const xp = entry.outputTokens
@@ -137,12 +151,8 @@ export function buildOfficeSnapshot(input: SnapshotInput): OfficeSnapshot {
   // Stable seating order: oldest character first, id as tie-breaker.
   characters.sort((a, b) => a.stats.firstSeen - b.stats.firstSeen || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 
-  let todayOutputTokens = 0
-  let lifetimeOutputTokens = 0
   let workingCharacters = 0
   for (const c of characters) {
-    todayOutputTokens += c.stats.todayOutputTokens
-    lifetimeOutputTokens += c.stats.outputTokens
     if (c.status !== 'idle') workingCharacters++
   }
 

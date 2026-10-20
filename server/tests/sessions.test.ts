@@ -16,6 +16,9 @@ const SECRETS = [
 ]
 
 const line = (o: unknown) => JSON.stringify(o) + '\n'
+// Fixed local noon: no assertion depends on the real clock or can straddle a local midnight.
+const NOW = new Date(2026, 9, 18, 12, 0, 0).getTime()
+const clock = { now: () => NOW }
 
 function header(id: string, cwd = '/root/github/pi-office') {
   return line({ type: 'session', id, timestamp: '2026-10-18T10:00:00.000Z', cwd })
@@ -31,7 +34,7 @@ function user() {
     timestamp: '2026-10-18T10:00:05.000Z',
     message: {
       role: 'user',
-      timestamp: Date.now(),
+      timestamp: NOW,
       content: [{ type: 'text', text: SECRETS[0] }],
     },
   })
@@ -40,13 +43,13 @@ function user() {
 function assistant(o: { stopReason: string; output?: number; tool?: string; start?: number }) {
   return line({
     type: 'message',
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(NOW).toISOString(),
     message: {
       role: 'assistant',
       provider: 'anthropic',
       model: 'claude-opus-5-5',
       stopReason: o.stopReason,
-      timestamp: o.start ?? Date.now() - 1000,
+      timestamp: o.start ?? NOW - 1000,
       usage: { input: 10, output: o.output ?? 100, cacheRead: 5, cacheWrite: 0 },
       content: [
         { type: 'text', text: SECRETS[2] },
@@ -60,11 +63,11 @@ function assistant(o: { stopReason: string; output?: number; tool?: string; star
 function toolResult() {
   return line({
     type: 'message',
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(NOW).toISOString(),
     message: {
       role: 'toolResult',
       toolName: 'bash',
-      timestamp: Date.now(),
+      timestamp: NOW,
       content: [{ type: 'text', text: SECRETS[4] }],
     },
   })
@@ -72,7 +75,7 @@ function toolResult() {
 
 async function withStore(fn: (dir: string, store: OfficeStore) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), 'pi-office-test-'))
-  const store = new OfficeStore(dir)
+  const store = new OfficeStore(dir, undefined, undefined, clock)
   try {
     await fn(dir, store)
   } finally {
@@ -124,7 +127,7 @@ test('store: reads sessions, derives status, aggregates roster', async () => {
     // assistant stop -> idle
     await appendFile(
       file,
-      assistant({ stopReason: 'stop', output: 50, start: Date.now() + 1000 }),
+      assistant({ stopReason: 'stop', output: 50, start: NOW + 1000 }),
     )
     await store.refresh()
     snap = store.snapshot()
@@ -140,11 +143,12 @@ test('store: tailing handles a partial trailing line', async () => {
     const file = join(dir, 'sessions', 'x.jsonl')
     await mkdir(join(dir, 'sessions'), { recursive: true })
     const full = header('sess-partial') + modelChange('openai-codex', 'gpt-6.1-sol') + user()
-    await writeFile(file, full + '{"type":"message","timestamp":"2026')
+    const replyTimestamp = new Date(NOW).toISOString()
+    await writeFile(file, full + '{"type":"message","timestamp":"' + replyTimestamp.slice(0, 4))
     await store.start()
     assert.equal(store.snapshot().characters.length, 0) // no assistant reply yet
 
-    await appendFile(file, '","message":{"role":"assistant","provider":"openai-codex","model":"gpt-6.1-sol","stopReason":"stop","timestamp":1,"usage":{"input":1,"output":42},"content":[]}}\n')
+    await appendFile(file, replyTimestamp.slice(4) + '","message":{"role":"assistant","provider":"openai-codex","model":"gpt-6.1-sol","stopReason":"stop","timestamp":' + NOW + ',"usage":{"input":1,"output":42},"content":[]}}\n')
     await store.refresh()
     const snap = store.snapshot()
     assert.equal(snap.characters.length, 1)
@@ -204,8 +208,8 @@ test('startOfLocalDay: local midnight', () => {
 })
 
 test('store: missing sessions directory is not fatal', async () => {
-  const dir = join(tmpdir(), 'pi-office-does-not-exist-' + Date.now())
-  const store = new OfficeStore(dir)
+  const dir = join(tmpdir(), 'pi-office-does-not-exist-' + process.pid + '-' + Math.random().toString(36).slice(2))
+  const store = new OfficeStore(dir, undefined, undefined, clock)
   try {
     await store.start()
     const snap = store.snapshot()
@@ -254,7 +258,7 @@ test('store: same-size rewrite with a newer mtime is reparsed', async () => {
     assert.equal(store.snapshot().characters[0].stats.outputTokens, 100)
 
     await writeFile(file, after)
-    const future = new Date(Date.now() + 5_000)
+    const future = new Date(NOW + 5_000)
     await utimes(file, future, future)
     await store.refresh()
     assert.equal(store.snapshot().characters[0].stats.outputTokens, 700)

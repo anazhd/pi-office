@@ -6,7 +6,12 @@ import { request, createServer, type IncomingMessage, type Server, type ServerRe
 import { connect, type AddressInfo, type Socket } from 'node:net'
 import type { OfficeSnapshot } from '../../shared/office-types.ts'
 import { SseHub } from '../sse.ts'
-import { handle, hub as appHub } from '../index.ts'
+import { loadConfig } from '../config.ts'
+import { createHandler } from '../index.ts'
+
+// The app route under test, with injected state: importing the server never builds a real store.
+const appHub = new SseHub()
+const handle = createHandler({ config: loadConfig({}), hub: appHub, snapshot: () => snapshot(1) })
 
 type Character = OfficeSnapshot['characters'][number]
 
@@ -110,9 +115,10 @@ test('sse socket: buffer-cap eviction destroys the real socket and frees the hub
     assert.equal(hub.size, 0, 'evicted client must leave the hub')
     assert.equal(res.destroyed, true, 'response must be destroyed, not merely ended')
     assert.equal(socket.destroyed, true, 'TCP socket must be destroyed to release its buffer')
-    assert.equal(socket.writableLength, 0, 'queued bytes must be dropped')
     await closed(socket)
-    assert.equal(socket.closed, true)
+    assert.equal(socket.closed, true, 'native TCP handle must be closed')
+    assert.equal(socket.writable, false, 'a closed socket cannot retain a live writable connection')
+    // Node 24 retains writableLength accounting after destruction; it is not a portable measure of live I/O.
   } finally {
     client.destroy()
     await stop(server)
@@ -207,7 +213,8 @@ test('sse socket: HEAD /api/stream answers SSE headers and ends without subscrib
     assert.match(String(result.headers['content-type']), /^text\/event-stream/)
     assert.equal(result.headers['cache-control'], 'no-cache')
     assert.equal(result.headers['x-accel-buffering'], 'no')
-    assert.equal(result.headers['access-control-allow-origin'], '*')
+    assert.equal(result.headers['access-control-allow-origin'], undefined, 'no wildcard CORS by default')
+    assert.equal(result.headers['x-content-type-options'], 'nosniff')
     assert.equal(result.body, '')
     assert.equal(appHub.size, 0, 'HEAD must not take a stream slot')
   } finally {

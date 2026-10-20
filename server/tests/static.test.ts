@@ -1,11 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { cacheControl, safePath } from '../index.ts'
+import { join } from 'node:path'
+import { DIST, cacheControl, safePath } from '../index.ts'
 
 test('safePath: resolves inside dist/', () => {
   const p = safePath('/assets/app.js')
   assert.ok(p)
-  assert.match(p!, /\/dist\/assets\/app\.js$/)
+  assert.equal(p, join(DIST, 'assets', 'app.js'))
   assert.equal(safePath('/'), safePath('/'))
 })
 

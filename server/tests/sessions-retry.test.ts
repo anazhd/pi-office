@@ -10,7 +10,10 @@ import { OfficeStore, nodeSessionFileSystem, type SessionFileSystem } from '../s
 type Op = 'stat' | 'open' | 'read'
 
 const line = (o: unknown) => JSON.stringify(o) + '\n'
-const T0 = Date.parse('2026-10-18T10:00:10.000Z')
+// Fixed local noon: no assertion depends on the real clock or can straddle a local midnight.
+const NOW = new Date(2026, 9, 18, 12, 0, 0).getTime()
+const clock = { now: () => NOW }
+const T0 = NOW - 60_000
 
 const header = (id: string) =>
   line({ type: 'session', id, timestamp: '2026-10-18T10:00:00.000Z', cwd: '/root/github/pi-office' })
@@ -19,7 +22,7 @@ const modelChange = () =>
 const user = () =>
   line({
     type: 'message',
-    timestamp: '2026-10-18T10:00:05.000Z',
+    timestamp: new Date(T0).toISOString(),
     message: { role: 'user', timestamp: T0, content: [{ type: 'text', text: 'hello' }] },
   })
 /** A finished assistant reply; `start` is its identity (with `output`), so distinct replies never dedupe. */
@@ -82,7 +85,7 @@ function flakyFs() {
 async function withFlakyStore(fn: (dir: string, store: OfficeStore, io: ReturnType<typeof flakyFs>) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), 'pi-office-retry-'))
   const io = flakyFs()
-  const store = new OfficeStore(dir, io.fs)
+  const store = new OfficeStore(dir, io.fs, undefined, clock)
   try {
     await fn(dir, store, io)
   } finally {
@@ -249,7 +252,7 @@ test('reset retry: failed open after an in-place rewrite (same size, new mtime) 
     assert.equal(store.snapshot().characters[0].stats.outputTokens, 100)
 
     await writeFile(file, after)
-    const future = new Date(Date.now() + 5_000)
+    const future = new Date(NOW + 5_000)
     await utimes(file, future, future)
     io.fail('open')
     await store.refresh()
@@ -299,7 +302,7 @@ test('reset retry: a shared (forked) reply keeps its other owner while one copy 
 
 test('retry: default filesystem still scans without injected faults', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'pi-office-default-fs-'))
-  const store = new OfficeStore(dir)
+  const store = new OfficeStore(dir, undefined, undefined, clock)
   try {
     await sessionFile(dir, 'plain.jsonl', header('sess-plain') + modelChange() + reply(9, T0))
     await store.start()

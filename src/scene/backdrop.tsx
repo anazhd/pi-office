@@ -13,28 +13,34 @@ import {
   Text as SvgText,
 } from 'react-native-svg'
 import { floorPolygon, iso, isoPoints, WALL_H } from './iso'
-import { LEFT_WINDOWS, RIGHT_WINDOWS, OPS_BOARD, SKY_ORB_WINDOW, rightWallTransform, type WindowSpec } from './wall-art'
+import { SEASON_LOOKS, type Season } from './season'
+import { skyPalette, type SkyPalette } from './sky'
+import {
+  LEFT_WINDOWS,
+  RIGHT_WINDOWS,
+  OPS_BOARD,
+  SKY_ORB,
+  SKY_ORB_NIGHT_RADIUS,
+  SKY_ORB_WINDOW,
+  rightWallTransform,
+  windowGlass,
+  type WindowSpec,
+} from './wall-art'
 
 const WOOD_TILES = ['#7A5D48', '#84664D', '#735745', '#7D6048']
 const SKEW = 26.565
 
-function skyPalette(now: number) {
-  const date = new Date(now)
-  const hour = date.getHours() + date.getMinutes() / 60
-  if (hour >= 5.5 && hour < 8.5) {
-    return { top: '#3F4C63', mid: '#B98A78', bottom: '#F0C39A', orb: '#F3C57A', night: false }
-  }
-  if (hour >= 8.5 && hour < 17) {
-    return { top: '#8FC3D6', mid: '#B9DCE2', bottom: '#EAF1DF', orb: '#F7E3A8', night: false }
-  }
-  if (hour >= 17 && hour < 20.5) {
-    return { top: '#6A5B72', mid: '#C97C63', bottom: '#F2B476', orb: '#F6D08A', night: false }
-  }
-  return { top: '#101A31', mid: '#1B2743', bottom: '#2B3A56', orb: '#EFE6CF', night: true }
-}
-
-export function Backdrop({ activeSessions, now }: { activeSessions: number; now: number }) {
-  const sky = skyPalette(now)
+export function Backdrop({
+  activeSessions,
+  now,
+  season,
+}: {
+  activeSessions: number
+  now: number
+  season: Season
+}) {
+  const look = SEASON_LOOKS[season]
+  const sky = skyPalette(now, season)
   const date = new Date(now)
   const clockMinutes = date.getMinutes()
   const clockHours = date.getHours() % 12
@@ -59,26 +65,12 @@ export function Backdrop({ activeSessions, now }: { activeSessions: number; now:
         </LinearGradient>
         {RIGHT_WINDOWS.map((w, i) => (
           <ClipPath id={`winR${i}`} key={`r${i}`}>
-            <Polygon
-              points={isoPoints([
-                [w.start, 0, 58],
-                [w.start + w.length, 0, 58],
-                [w.start + w.length, 0, 160],
-                [w.start, 0, 160],
-              ])}
-            />
+            <Polygon points={windowGlass('right', w, i).points} />
           </ClipPath>
         ))}
         {LEFT_WINDOWS.map((w, i) => (
           <ClipPath id={`winL${i}`} key={`l${i}`}>
-            <Polygon
-              points={isoPoints([
-                [0, w.start, 58],
-                [0, w.start + w.length, 58],
-                [0, w.start + w.length, 160],
-                [0, w.start, 160],
-              ])}
-            />
+            <Polygon points={windowGlass('left', w, i).points} />
           </ClipPath>
         ))}
       </Defs>
@@ -114,6 +106,18 @@ export function Backdrop({ activeSessions, now }: { activeSessions: number; now:
         )),
       )}
 
+      {/* seasonal tint, kept whisper-quiet so sprites keep their true colours */}
+      <Polygon
+        points={isoPoints([
+          [0, 0],
+          [14, 0],
+          [14, 10],
+          [0, 10],
+        ])}
+        fill={look.floorTint.color}
+        opacity={look.floorTint.opacity}
+      />
+
       {/* soft light pool from the windows */}
       <Polygon
         points={isoPoints([
@@ -122,13 +126,13 @@ export function Backdrop({ activeSessions, now }: { activeSessions: number; now:
           [6.4, 4.6],
           [3.4, 4.6],
         ])}
-        fill={sky.night ? '#8FB9C9' : '#F6E7C8'}
-        opacity={sky.night ? 0.04 : 0.07}
+        fill={sky.night ? '#8FB9C9' : look.pool.color}
+        opacity={sky.night ? 0.04 : look.pool.opacity}
       />
 
-      <Ellipse cx={340} cy={392} rx={400} ry={190} fill="#F3C57A" opacity={0.055} />
-      <Ellipse cx={560} cy={470} rx={250} ry={130} fill="#F3C57A" opacity={0.045} />
-      <Ellipse cx={210} cy={335} rx={210} ry={105} fill="#F6E7C8" opacity={0.05} />
+      <Ellipse cx={340} cy={392} rx={400} ry={190} fill="#F3C57A" opacity={0.055 * look.warmth} />
+      <Ellipse cx={560} cy={470} rx={250} ry={130} fill="#F3C57A" opacity={0.045 * look.warmth} />
+      <Ellipse cx={210} cy={335} rx={210} ry={105} fill="#F6E7C8" opacity={0.05 * look.warmth} />
 
       <Rug />
       <EntranceMat />
@@ -197,10 +201,10 @@ export function Backdrop({ activeSessions, now }: { activeSessions: number; now:
       />
 
       {RIGHT_WINDOWS.map((w, i) => (
-        <RightWindow key={`rw${i}`} spec={w} index={i} sky={sky} />
+        <RightWindow key={`rw${i}`} spec={w} index={i} sky={sky} season={season} />
       ))}
       {LEFT_WINDOWS.map((w, i) => (
-        <LeftWindow key={`lw${i}`} spec={w} index={i} sky={sky} />
+        <LeftWindow key={`lw${i}`} spec={w} index={i} sky={sky} season={season} />
       ))}
 
       <OpsBoard active={activeSessions} />
@@ -213,34 +217,36 @@ function RightWindow({
   spec,
   index,
   sky,
+  season,
 }: {
   spec: WindowSpec
   index: number
-  sky: ReturnType<typeof skyPalette>
+  sky: SkyPalette
+  season: Season
 }) {
   const { start, length } = spec
-  const p1 = iso(start, 0, 58)
-  const p2 = iso(start + length, 0, 58)
-  const t1 = iso(start, 0, 160)
-  const t2 = iso(start + length, 0, 160)
-  const mx = (p1.x + p2.x) / 2
-  const my = (p1.y + p2.y) / 2
-  const mtx = (t1.x + t2.x) / 2
-  const mty = (t1.y + t2.y) / 2
-  const midZ = iso(start, 0, 109)
-  const midZ2 = iso(start + length, 0, 109)
-  const orb = iso(start + length * 0.7, 0, 132)
+  const glass = windowGlass('right', spec, index)
+  const p1 = glass.bottomLeft
+  const p2 = glass.bottomRight
+  const t1 = glass.topLeft
+  const t2 = glass.topRight
+  const orb = iso(start + length * SKY_ORB.along, 0, SKY_ORB.z)
 
   return (
     <G>
-      <Polygon
-        points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${t2.x},${t2.y} ${t1.x},${t1.y}`}
-        fill="url(#skyGrad)"
-      />
+      <Polygon points={glass.points} fill="url(#skyGrad)" />
       <G clipPath={`url(#winR${index})`}>
-        <Skyline x1={p1.x} x2={p2.x} y1={p1.y} y2={p2.y} night={sky.night} />
+        <Skyline
+          x1={p1.x}
+          x2={p2.x}
+          y1={p1.y}
+          y2={p2.y}
+          night={sky.night}
+          season={season}
+          length={length}
+        />
         {index === SKY_ORB_WINDOW.index ? <G>
-        <Circle cx={orb.x} cy={orb.y} r={sky.night ? 8 : 10} fill={sky.orb} opacity={sky.night ? 0.85 : 0.7} />
+        <Circle cx={orb.x} cy={orb.y} r={sky.night ? SKY_ORB_NIGHT_RADIUS : 10} fill={sky.orb} opacity={sky.night ? 0.85 : 0.7} />
         {!sky.night ? (
           <Circle cx={orb.x} cy={orb.y} r={19} fill={sky.orb} opacity={0.13} />
         ) : (
@@ -260,30 +266,6 @@ function RightWindow({
             ))
           : null}
       </G>
-      <Polygon
-        points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${t2.x},${t2.y} ${t1.x},${t1.y}`}
-        fill="none"
-        stroke="#2A2119"
-        strokeWidth={3.2}
-      />
-      <Line x1={mx} y1={my} x2={mtx} y2={mty} stroke="#2A2119" strokeWidth={2.4} />
-      <Line
-        x1={midZ.x}
-        y1={midZ.y}
-        x2={midZ2.x}
-        y2={midZ2.y}
-        stroke="#2A2119"
-        strokeWidth={2.2}
-      />
-      <Polygon
-        points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${p2.x},${p2.y + 5} ${p1.x},${p1.y + 5}`}
-        fill="#8A7258"
-      />
-      <Polygon
-        points={`${p1.x + 4},${p1.y - 9} ${p1.x + 12},${p1.y - 4} ${p1.x + 12},${t1.y + 8} ${p1.x + 4},${t1.y + 3}`}
-        fill="#FFFFFF"
-        opacity={sky.night ? 0.025 : 0.09}
-      />
     </G>
   )
 }
@@ -292,51 +274,32 @@ function LeftWindow({
   spec,
   index,
   sky,
+  season,
 }: {
   spec: WindowSpec
   index: number
-  sky: ReturnType<typeof skyPalette>
+  sky: SkyPalette
+  season: Season
 }) {
-  const { start, length } = spec
-  const p1 = iso(0, start, 58)
-  const p2 = iso(0, start + length, 58)
-  const t1 = iso(0, start, 160)
-  const t2 = iso(0, start + length, 160)
-  const mx = (p1.x + p2.x) / 2
-  const my = (p1.y + p2.y) / 2
-  const mtx = (t1.x + t2.x) / 2
-  const mty = (t1.y + t2.y) / 2
-  const midZ = iso(0, start, 109)
-  const midZ2 = iso(0, start + length, 109)
+  const { length } = spec
+  const glass = windowGlass('left', spec, index)
+  const p1 = glass.bottomLeft
+  const p2 = glass.bottomRight
 
   return (
     <G>
-      <Polygon
-        points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${t2.x},${t2.y} ${t1.x},${t1.y}`}
-        fill="url(#skyGrad)"
-      />
+      <Polygon points={glass.points} fill="url(#skyGrad)" />
       <G clipPath={`url(#winL${index})`}>
-        <Skyline x1={p1.x} x2={p2.x} y1={p1.y} y2={p2.y} night={sky.night} />
+        <Skyline
+          x1={p1.x}
+          x2={p2.x}
+          y1={p1.y}
+          y2={p2.y}
+          night={sky.night}
+          season={season}
+          length={length}
+        />
       </G>
-      <Polygon
-        points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${t2.x},${t2.y} ${t1.x},${t1.y}`}
-        fill="none"
-        stroke="#241C16"
-        strokeWidth={3.2}
-      />
-      <Line x1={mx} y1={my} x2={mtx} y2={mty} stroke="#241C16" strokeWidth={2.4} />
-      <Line
-        x1={midZ.x}
-        y1={midZ.y}
-        x2={midZ2.x}
-        y2={midZ2.y}
-        stroke="#241C16"
-        strokeWidth={2.2}
-      />
-      <Polygon
-        points={`${p1.x},${p1.y} ${p2.x},${p2.y} ${p2.x},${p2.y + 5} ${p1.x},${p1.y + 5}`}
-        fill="#7A6550"
-      />
     </G>
   )
 }
@@ -347,16 +310,22 @@ function Skyline({
   y1,
   y2,
   night,
+  season,
+  length,
 }: {
   x1: number
   x2: number
   y1: number
   y2: number
   night: boolean
+  season: Season
+  length: number
 }) {
   const count = 7
+  const roofSnow = SEASON_LOOKS[season].roofSnow
   return (
-    <G opacity={night ? 0.9 : 0.5}>
+    <G>
+      <G opacity={night ? 0.9 : 0.5}>
       {Array.from({ length: count }).map((_, i) => {
         const f1 = i / count
         const f2 = (i + 0.82) / count
@@ -385,6 +354,89 @@ function Skyline({
                   />
                 ))
               : null}
+            {roofSnow ? (
+              <Polygon
+                points={`${bx1},${by1 - h} ${bx2},${by2 - h} ${bx2},${by2 - h + 2.2} ${bx1},${by1 - h + 2.2}`}
+                fill="#EEF3F7"
+                opacity={night ? 0.5 : 0.85}
+              />
+            ) : null}
+          </G>
+        )
+      })}
+      </G>
+      <TreeLine
+        x1={x1}
+        x2={x2}
+        y1={y1}
+        y2={y2}
+        night={night}
+        season={season}
+        length={length}
+      />
+    </G>
+  )
+}
+
+const TREE_COLORS: Record<string, string[]> = {
+  blossom: ['#86B86A', '#7CAD62', '#93C077'],
+  full: ['#4F8A4A', '#3F7440', '#5C9653'],
+  turning: ['#C97A36', '#B5532F', '#D9A441'],
+}
+
+function TreeLine({
+  x1,
+  x2,
+  y1,
+  y2,
+  night,
+  season,
+  length,
+}: {
+  x1: number
+  x2: number
+  y1: number
+  y2: number
+  night: boolean
+  season: Season
+  length: number
+}) {
+  const trees = SEASON_LOOKS[season].trees
+  const count = Math.max(2, Math.round(length * 2.2))
+  const colors = TREE_COLORS[trees]
+  return (
+    <G opacity={night ? 0.5 : 1}>
+      {Array.from({ length: count }).map((_, i) => {
+        const f = (i + 0.5) / count
+        const x = x1 + (x2 - x1) * f
+        const sill = y1 + (y2 - y1) * f
+        const r = 5 + ((i * 7) % 4) * 1.1
+        const cy = sill - 3
+        const trunk = trees === 'bare' ? (night ? '#6E6052' : '#4A3F38') : '#5C4A38'
+        return (
+          <G key={i}>
+            <Line x1={x} y1={cy} x2={x} y2={sill + 6} stroke={trunk} strokeWidth={1.3} />
+            {trees === 'bare' ? (
+              <G>
+                <Line x1={x} y1={cy + 2} x2={x - r * 0.9} y2={cy - 5} stroke={trunk} strokeWidth={0.9} />
+                <Line x1={x} y1={cy + 1} x2={x + r * 0.9} y2={cy - 6} stroke={trunk} strokeWidth={0.9} />
+                <Line x1={x} y1={cy - 1} x2={x} y2={cy - 8} stroke={trunk} strokeWidth={0.8} />
+                {/* a thin line of snow on the upper side of each branch */}
+                <Line x1={x - r * 0.9} y1={cy - 5.6} x2={x} y2={cy - 2.6} stroke="#EAF2F7" strokeWidth={1.1} opacity={0.55} strokeLinecap="round" />
+                <Line x1={x} y1={cy - 2.6} x2={x + r * 0.9} y2={cy - 6.6} stroke="#EAF2F7" strokeWidth={1.1} opacity={0.55} strokeLinecap="round" />
+              </G>
+            ) : (
+              <G>
+                <Circle cx={x} cy={cy} r={r} fill={colors[i % colors.length]} opacity={0.95} />
+                <Circle cx={x + r * 0.35} cy={cy - r * 0.45} r={r * 0.62} fill={colors[(i + 1) % colors.length]} opacity={0.9} />
+                {trees === 'blossom' ? (
+                  <G>
+                    <Circle cx={x - r * 0.4} cy={cy - r * 0.2} r={1.5} fill="#F2C6D2" />
+                    <Circle cx={x + r * 0.5} cy={cy + r * 0.3} r={1.2} fill="#F2C6D2" />
+                  </G>
+                ) : null}
+              </G>
+            )}
           </G>
         )
       })}
