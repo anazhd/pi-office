@@ -179,8 +179,8 @@ and Windows (`.github/workflows/ci.yml`). See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Under the hood
 
-- Expo SDK 58 (`expo@~58.0.16`), Expo Router, TypeScript
-- NativeWind 4 + Tailwind CSS 3.4 for HUD/card chrome
+- Expo SDK 58 (`expo@~58.0.17`), Expo Router, TypeScript
+- NativeWind 5 RC + Tailwind CSS 4.3 for HUD/card chrome (exact RC engine pair pinned)
 - `react-native-svg` for the office, furniture and character sprites (web, iOS and Android)
 - A shared `useTick(20)` clock drives SVG transforms and pauses when the document/app is hidden
 - Live data: `GET /api/office` + SSE `GET /api/stream`, with reconnect backoff and polling fallback on native

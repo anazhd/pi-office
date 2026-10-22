@@ -23,10 +23,11 @@ Sibling of the `pi-stats` project (same patterns: session tailing, per-user serv
   (HUD, cards, legends). Isometric scene drawn with **`react-native-svg`** (works on web + iOS + Android).
   Animation: `react-native-reanimated` is allowed but a simple shared `useTick(fps)` clock + SVG transforms is
   fine and preferred for simplicity. Must work with `npx expo export -p web` (web output `single`).
-  Install deps with `npx expo install`. NativeWind: prefer stable `nativewind@^4` + `tailwindcss@^3.4`
-  (follow nativewind docs for Expo: `babel.config.js`, `metro.config.js` `withNativeWind`, `global.css`,
-  `nativewind-env.d.ts`). If it is genuinely incompatible with SDK 58, use `nativewind@5` preview +
-  `tailwindcss@4` + `react-native-css` per its docs. Either way verify classes render in the web export.
+  Install deps with `npx expo install`. Styling uses the pinned pair `nativewind@5.0.0-rc.0` +
+  `react-native-css@3.1.0-rc.0`, with Tailwind CSS 4 and `@tailwindcss/postcss`. Theme tokens live in
+  `global.css`; Metro uses `withNativewind`. Keep utilities unlayered so React Native Web defaults do not
+  override them. This prerelease stack is approved for the web app after browser validation; native
+  exports compile, but device runtime verification remains pending before a mobile release.
 - **Server:** zero-dependency Node (v26, runs `.ts` directly via native type stripping, like pi-stats tests —
   so use only erasable TS syntax: no enums, no namespaces, no parameter properties, use `import type`, and
   include `.ts` extensions in relative imports). Serves the exported web app (`dist/`) with SPA fallback plus

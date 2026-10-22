@@ -1,14 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 const require = createRequire(import.meta.url)
 
-test('patched selector parser remains compatible with Tailwind nested selectors', async () => {
+test('Tailwind 4 compiles custom tokens and opacity utilities', async () => {
   const postcss = require('postcss')
-  const nested = require('postcss-nested')
-  const result = await postcss([nested]).process('.card { &:hover { color: red } }', { from: undefined })
-  assert.match(result.css, /\.card:hover/)
-  assert.match(result.css, /color: red/)
+  const tailwind = require('@tailwindcss/postcss')
+  const result = await postcss([tailwind()]).process(
+    '@import "tailwindcss"; @theme { --color-cream: #F4EDE0; } @source inline("text-cream bg-cream/80");',
+    { from: fileURLToPath(new URL('../global.css', import.meta.url)) },
+  )
+  assert.match(result.css, /\.text-cream/)
+  assert.match(result.css, /color-mix/)
+  assert.doesNotMatch(result.css, /@source/)
 })
 
 test('xcode UUID override retains the CommonJS v4 API', () => {

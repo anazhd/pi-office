@@ -60,6 +60,16 @@ try {
   await browser('wait', '--fn',
     "document.querySelector('svg') !== null && /office/i.test(document.body.innerText)")
   assert.deepEqual((await browser('errors')).errors, [])
+  // A successful export can still contain unprocessed CSS or lose utilities to RN Web defaults.
+  const styling = (await browser('eval', `(() => {
+    const title = document.querySelector('.font-display.text-cream')
+    if (!title) return null
+    const style = getComputedStyle(title)
+    return { color: style.color, font: style.fontFamily }
+  })()`)).result
+  assert.ok(styling, 'custom theme element is rendered')
+  assert.equal(styling.color, 'rgb(244, 237, 224)', 'Tailwind cream token reaches rendered text')
+  assert.match(styling.font, /Fraunces_600SemiBold/, 'custom display font utility is applied')
 
   // Each season is reachable from the URL and paints its own weather layer (no page errors).
   for (const season of SEASONS) {
