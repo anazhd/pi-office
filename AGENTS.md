@@ -2,26 +2,24 @@
 
 Read-only isometric “window into Pi”. See `README.md` for the product and `SPEC.md` for the contract.
 
-## Running / deploying
+## Running / deploying (this server)
 
-- Served by the systemd user service `pi-office` on `http://127.0.0.1:6702` (enabled, restarts on failure).
-- Deploy with `sh scripts/install-local.sh` (= `node scripts/build.mjs` + `node scripts/setup.mjs install-service`:
-  rewrites the unit keeping its existing `Environment=` lines, enables and restarts), or
-  `npm run build && systemctl --user restart pi-office`. Preview first with `node scripts/setup.mjs install-service --dry-run`.
-- `node scripts/setup.mjs doctor` is read-only: checks Node, build, data paths, config and the service manager.
-- The server refuses unknown Host names (421). A public tunnel/proxy hostname must be in the service's
-  `PI_OFFICE_ALLOWED_HOSTS` (and the proxy in `PI_OFFICE_TRUSTED_PROXIES`) before restarting; see `SECURITY.md`.
-  Never add wildcard CORS, authentication theatre or a non-loopback bind without an explicit request.
-- Do not start extra servers on `127.0.0.1:6702`. `npm run dev` (Expo web, :8081) is fine for UI iteration.
-- Check status: `systemctl --user status pi-office`, logs: `journalctl --user -u pi-office`.
-- Confirm with `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6702/` → `200`.
+- Read `deploy/README.md` for the hardened deployment and permissions contract.
+- Keep editing this checkout normally. After changes, run **`sh scripts/install-local.sh`**:
+  builds, refreshes scoped ACLs, installs the versioned unit, restarts and health-checks.
+- Runtime is the dedicated non-root user `pi-office` in a sandboxed **system** service.
+  Use `systemctl restart pi-office`, `systemctl status pi-office`, and `journalctl -u pi-office`;
+  **never `systemctl --user` or a root-running replacement server**.
+- Source stays here, read-only mounted at `/srv/pi-office` inside the service.
+  Pi data is read-only at `/var/lib/pi-data`; root's home and vault are hidden.
+- Change production service settings in `deploy/pi-office.service`, then deploy.
+- Do not start duplicate production servers on :6702.
+- Preserve allowed-host and trusted-proxy restrictions. Do not use the portable setup installer to replace this server's hardened deployment.
 
 ## Browser testing
 
-- Use the lightweight native Rust `agent-browser` CLI, not direct Playwright.
-- First-time browser setup: `npx agent-browser install` (Linux libraries if needed: `npx agent-browser install --with-deps`).
-- Run `npm run test:browser` against the existing service on :6702, or set `OFFICE_BROWSER_URL=http://127.0.0.1:8081/` for an already-running dev server.
-- The smoke test is read-only, uses an isolated session, and closes it on completion. Do not wait for networkidle: the office uses SSE.
+- Browser checks use T3's preview tools (see the global AGENTS.md). The former `npm run test:browser` smoke test and its agent-browser CLI were removed.
+- Do not wait for networkidle: the office uses SSE.
 
 ## Before finishing
 

@@ -26,7 +26,6 @@ npm run check                            # typecheck + server, scene and script 
 ```
 
 `npm run build:mock` makes a fixture build for demos only; never deploy it (the installer refuses).
-The browser smoke test (`npm run test:browser`) needs a running server and the agent-browser CLI; it is read-only.
 
 ## Pull requests
 

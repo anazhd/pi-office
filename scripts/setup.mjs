@@ -9,7 +9,7 @@
 // Foreground (every OS, no service): npm start   (= node server/index.ts)
 // This file deliberately starts with no TypeScript imports so an old Node gets a clear message, not a stack trace.
 import { fileURLToPath } from 'node:url'
-import { realpathSync } from 'node:fs'
+import { realpathSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const MIN = [24, 12, 0]
@@ -84,6 +84,13 @@ async function main(argv) {
   if (args.command === 'help' || args.command === '--help' || args.command === '-h') {
     console.log(USAGE)
     return 0
+  }
+  if (process.platform === 'linux' && !args.dryRun &&
+      ['install-service', 'uninstall-service'].includes(args.command) &&
+      existsSync('/etc/systemd/system/pi-office.service') &&
+      existsSync(new URL('../deploy/pi-office.service', import.meta.url))) {
+    console.error('This host uses the hardened system service. Deploy with sh scripts/install-local.sh; manage it with systemctl (without --user). See deploy/README.md.')
+    return 2
   }
   const { run } = await import('./setup-run.mjs')
   return run(args)

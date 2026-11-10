@@ -1,5 +1,10 @@
 # Pi Office
 
+> **This server:** production runs as the unprivileged `pi-office` system service.
+> Deploy normally with `sh scripts/install-local.sh`; see [hardened deployment](deploy/README.md).
+> This host-specific procedure supersedes any per-user service instructions below.
+
+
 ![Pi Office — a cozy isometric office with original golden pixel-art lettering](docs/images/pi-office-hero.png)
 
 **Yet another useless virtual office. This time, it's pure show.**

@@ -10,6 +10,10 @@
 # Windows: npm run build, then node scripts/setup.mjs install-service. See README.md.
 # Data: Pi's session logs are only read, never written. The server's only write is its desk-state file.
 set -eu
+# This server uses the hardened system service, never recreate a root user service.
+if [ -f /etc/systemd/system/pi-office.service ] && [ -f "$(dirname "$0")/../deploy/pi-office.service" ]; then
+  exec sh "$(dirname "$0")/deploy-hardened.sh" "$@"
+fi
 cd "$(dirname "$0")/.."
 if ! command -v node >/dev/null 2>&1; then
   echo "ERROR: node is not on PATH. Install Node >= 24.12 (https://nodejs.org or fnm/nvm/Homebrew) and retry." >&2
